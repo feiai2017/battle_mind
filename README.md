@@ -44,3 +44,8 @@
 - `internal/llm`：模型调用封装
 - `internal/model`：请求响应结构
 - `testdata`：样例日志与本地测试数据
+
+## 配置说明
+- 启动默认读取项目根目录 `config.json`。
+- 仓库只提交 `config.json.example`，不提交真实 `config.json`。
+- 本地先复制 `config.json.example` 为 `config.json`，再填写真实模型配置。
