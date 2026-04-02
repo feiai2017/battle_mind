@@ -49,3 +49,4 @@
 - 启动默认读取项目根目录 `config.json`。
 - 仓库只提交 `config.json.example`，不提交真实 `config.json`。
 - 本地先复制 `config.json.example` 为 `config.json`，再填写真实模型配置。
+- `model` 配置至少包含：`api_key`、`base_url`、`model`、`timeout_seconds`。

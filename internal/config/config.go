@@ -26,6 +26,7 @@ type ServerConfig struct {
 type ModelConfig struct {
 	APIKey         string `json:"api_key"`
 	BaseURL        string `json:"base_url"`
+	Model          string `json:"model"`
 	TimeoutSeconds int    `json:"timeout_seconds"`
 }
 
@@ -66,6 +67,7 @@ func applyDefaults(cfg *Config) {
 
 	cfg.Model.APIKey = strings.TrimSpace(cfg.Model.APIKey)
 	cfg.Model.BaseURL = strings.TrimSpace(cfg.Model.BaseURL)
+	cfg.Model.Model = strings.TrimSpace(cfg.Model.Model)
 }
 
 func validate(cfg *Config) error {
@@ -74,6 +76,9 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Model.BaseURL == "" {
 		return fmt.Errorf("invalid config: model.base_url is required")
+	}
+	if cfg.Model.Model == "" {
+		return fmt.Errorf("invalid config: model.model is required")
 	}
 	return nil
 }

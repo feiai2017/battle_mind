@@ -43,7 +43,7 @@ type DiagnosisInput struct {
 // AnalyzeResult 是分析服务标准输出，供上层接口直接返回。
 type AnalyzeResult struct {
 	Summary     string   `json:"summary"`
-	Issues      []string `json:"issues"`
+	Problems    []string `json:"problems"`
 	Suggestions []string `json:"suggestions"`
-	Confidence  float64  `json:"confidence"`
+	RawText     string   `json:"raw_text,omitempty"`
 }
