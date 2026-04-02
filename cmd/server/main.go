@@ -27,6 +27,7 @@ func main() {
 	h := handler.New()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", h.Health)
+	mux.HandleFunc("/tools/convert/analyze-request", h.ConvertAnalyzeRequest)
 
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
 	fmt.Printf("server starting on %s\n", addr)
