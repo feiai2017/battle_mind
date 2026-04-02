@@ -12,10 +12,14 @@ import (
 // ConvertBattleReportToAnalyzeRequest 将 battle report 最小结构转换为 AnalyzeRequest。
 func ConvertBattleReportToAnalyzeRequest(report model.BattleReport) model.AnalyzeRequest {
 	return model.AnalyzeRequest{
+		SchemaVersion: model.AnalyzeRequestSchemaVersionV1,
 		Metadata: model.AnalyzeMetadata{
-			BattleType: report.FloorContext.PressureType,
-			BuildTags:  buildTags(report),
-			Notes:      buildNotes(report),
+			BattleType:     report.FloorContext.PressureType,
+			BuildTags:      buildTags(report),
+			FloorID:        strings.TrimSpace(report.FloorID),
+			NotableRules:   normalizeStringList(report.FloorContext.NotableRules),
+			FloorModifiers: normalizeStringList(report.FloorContext.FloorModifiers),
+			Notes:          buildNotes(report),
 		},
 		Summary: model.BattleSummary{
 			Win:          report.ResultSummary.Win,
@@ -133,15 +137,39 @@ func mapDiagnosis(items []model.RawDiagnosis) []model.DiagnosisInput {
 	return result
 }
 
-func encodeDiagnosisDetails(raw json.RawMessage) string {
+func encodeDiagnosisDetails(raw json.RawMessage) json.RawMessage {
 	trimmed := strings.TrimSpace(string(raw))
-	if trimmed == "" {
-		return ""
+	if trimmed == "" || trimmed == "null" {
+		return nil
 	}
 
 	var compact bytes.Buffer
 	if err := json.Compact(&compact, raw); err == nil {
-		return compact.String()
+		return append(json.RawMessage(nil), compact.Bytes()...)
 	}
-	return trimmed
+	return append(json.RawMessage(nil), []byte(trimmed)...)
+}
+
+func normalizeStringList(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }

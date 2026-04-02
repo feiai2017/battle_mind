@@ -46,6 +46,14 @@ func (h *Handler) Analyze(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	if err := req.NormalizeAndValidate(); err != nil {
+		log.Printf("component=analyze_handler request_id=%s event=validate_failed error=%q", requestID, err.Error())
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"ok":    false,
+			"error": fmt.Sprintf("invalid analyze request: %v", err),
+		})
+		return
+	}
 	log.Printf(
 		"component=analyze_handler request_id=%s event=request_decoded battle_type=%s diagnosis_count=%d",
 		requestID,

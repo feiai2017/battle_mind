@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,6 +18,34 @@ var (
 	ErrInvalidAnalyzeResult = errors.New("invalid analyze result")
 )
 
+const (
+	maxPromptDiagnosisItems = 20
+	maxPromptDetailsChars   = 512
+)
+
+type analyzePromptInput struct {
+	Metadata  analyzePromptMetadata    `json:"metadata"`
+	Summary   model.BattleSummary      `json:"summary"`
+	Metrics   model.BattleMetrics      `json:"metrics"`
+	Diagnosis []analyzePromptDiagnosis `json:"diagnosis,omitempty"`
+}
+
+type analyzePromptMetadata struct {
+	BattleType     string   `json:"battle_type"`
+	BuildTags      []string `json:"build_tags,omitempty"`
+	FloorID        string   `json:"floor_id,omitempty"`
+	NotableRules   []string `json:"notable_rules,omitempty"`
+	FloorModifiers []string `json:"floor_modifiers,omitempty"`
+	Notes          string   `json:"notes,omitempty"`
+}
+
+type analyzePromptDiagnosis struct {
+	Code     string `json:"code"`
+	Severity string `json:"severity"`
+	Message  string `json:"message"`
+	Details  string `json:"details,omitempty"`
+}
+
 // AnalyzeService 串联 prompt 组装与模型调用。
 type AnalyzeService struct {
 	client *llm.Client
@@ -29,6 +58,9 @@ func NewAnalyzeService(client *llm.Client) *AnalyzeService {
 func (s *AnalyzeService) Analyze(ctx context.Context, req model.AnalyzeRequest) (model.AnalyzeResult, error) {
 	if s == nil || s.client == nil {
 		return model.AnalyzeResult{}, fmt.Errorf("analyze service is not initialized")
+	}
+	if err := req.NormalizeAndValidate(); err != nil {
+		return model.AnalyzeResult{}, fmt.Errorf("validate analyze request: %w", err)
 	}
 	requestID := llm.RequestIDFromContext(ctx)
 	log.Printf("component=analyze_service request_id=%s event=analyze_start", requestID)
@@ -75,7 +107,8 @@ func (s *AnalyzeService) Analyze(ctx context.Context, req model.AnalyzeRequest) 
 }
 
 func buildAnalyzePrompt(req model.AnalyzeRequest) (string, error) {
-	reqJSON, err := json.Marshal(req)
+	promptInput := buildPromptInput(req)
+	reqJSON, err := json.Marshal(promptInput)
 	if err != nil {
 		return "", err
 	}
@@ -98,6 +131,55 @@ func buildAnalyzePrompt(req model.AnalyzeRequest) (string, error) {
 	builder.WriteString("\n\n规范化战斗输入：\n")
 	builder.Write(reqJSON)
 	return builder.String(), nil
+}
+
+func buildPromptInput(req model.AnalyzeRequest) analyzePromptInput {
+	input := analyzePromptInput{
+		Metadata: analyzePromptMetadata{
+			BattleType:     req.Metadata.BattleType,
+			BuildTags:      req.Metadata.BuildTags,
+			FloorID:        req.Metadata.FloorID,
+			NotableRules:   req.Metadata.NotableRules,
+			FloorModifiers: req.Metadata.FloorModifiers,
+			Notes:          req.Metadata.Notes,
+		},
+		Summary: req.Summary,
+		Metrics: req.Metrics,
+	}
+
+	diagnosis := req.Diagnosis
+	if len(diagnosis) > maxPromptDiagnosisItems {
+		diagnosis = diagnosis[:maxPromptDiagnosisItems]
+	}
+	if len(diagnosis) > 0 {
+		input.Diagnosis = make([]analyzePromptDiagnosis, 0, len(diagnosis))
+		for _, item := range diagnosis {
+			input.Diagnosis = append(input.Diagnosis, analyzePromptDiagnosis{
+				Code:     item.Code,
+				Severity: item.Severity,
+				Message:  item.Message,
+				Details:  diagnosisDetailsPreview(item.Details),
+			})
+		}
+	}
+
+	return input
+}
+
+func diagnosisDetailsPreview(raw json.RawMessage) string {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return ""
+	}
+
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, raw); err == nil {
+		trimmed = compact.String()
+	}
+	if len(trimmed) <= maxPromptDetailsChars {
+		return trimmed
+	}
+	return trimmed[:maxPromptDetailsChars] + "...(truncated)"
 }
 
 func parseAnalyzeResult(raw string) (model.AnalyzeResult, error) {

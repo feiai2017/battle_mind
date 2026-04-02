@@ -72,8 +72,14 @@ func TestConvertAnalyzeRequest_DefaultResponse(t *testing.T) {
 	if !payload.OK {
 		t.Fatalf("expected ok=true")
 	}
+	if payload.Data.SchemaVersion != model.AnalyzeRequestSchemaVersionV1 {
+		t.Fatalf("unexpected schema version: %s", payload.Data.SchemaVersion)
+	}
 	if payload.Data.Metadata.BattleType != "burst" {
 		t.Fatalf("unexpected battle type: %s", payload.Data.Metadata.BattleType)
+	}
+	if payload.Data.Metadata.FloorID != "floor-01" {
+		t.Fatalf("unexpected floor id: %s", payload.Data.Metadata.FloorID)
 	}
 	if payload.Data.Metrics.DamageBySource.BasicAttack != 30 {
 		t.Fatalf("unexpected basic attack damage: %v", payload.Data.Metrics.DamageBySource.BasicAttack)

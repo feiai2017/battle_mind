@@ -57,8 +57,20 @@ func TestConvertBattleReportToAnalyzeRequest(t *testing.T) {
 
 	out := ConvertBattleReportToAnalyzeRequest(report)
 
+	if out.SchemaVersion != model.AnalyzeRequestSchemaVersionV1 {
+		t.Fatalf("unexpected schema version: %s", out.SchemaVersion)
+	}
 	if out.Metadata.BattleType != "burst" {
 		t.Fatalf("unexpected battle type: %s", out.Metadata.BattleType)
+	}
+	if out.Metadata.FloorID != "f1" {
+		t.Fatalf("unexpected floor id: %s", out.Metadata.FloorID)
+	}
+	if len(out.Metadata.NotableRules) != 1 || out.Metadata.NotableRules[0] != "no_heal" {
+		t.Fatalf("unexpected notable rules: %#v", out.Metadata.NotableRules)
+	}
+	if len(out.Metadata.FloorModifiers) != 1 || out.Metadata.FloorModifiers[0] != "low_mana" {
+		t.Fatalf("unexpected floor modifiers: %#v", out.Metadata.FloorModifiers)
 	}
 	if len(out.Metadata.BuildTags) != 4 {
 		t.Fatalf("unexpected build tags length: %d", len(out.Metadata.BuildTags))
@@ -84,7 +96,7 @@ func TestConvertBattleReportToAnalyzeRequest(t *testing.T) {
 	if out.Metrics.SkillUsage["ice_lance"] != 4 {
 		t.Fatalf("unexpected ice_lance casts: %d", out.Metrics.SkillUsage["ice_lance"])
 	}
-	if out.Diagnosis[0].Details != `{"uptime":0.72}` {
-		t.Fatalf("unexpected diagnosis details: %s", out.Diagnosis[0].Details)
+	if string(out.Diagnosis[0].Details) != `{"uptime":0.72}` {
+		t.Fatalf("unexpected diagnosis details: %s", string(out.Diagnosis[0].Details))
 	}
 }
