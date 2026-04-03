@@ -13,7 +13,7 @@
 - `POST /tools/convert/analyze-request`：battle report 转 AnalyzeRequest（独立工具接口）
 - 配置文件加载（`config.json`）
 - 最小 LLM client（`net/http` + timeout + 错误处理）
-- `/analyze` 结构化输出：`summary` / `problems` / `suggestions`（含调试字段 `raw_text`）
+- `/analyze` 结构化输出：`summary` / `issues` / `suggestions`（含调试字段 `raw_text`）
 - 基础容错：支持解析模型输出中的 ```json 代码块包裹
 
 ## 当前暂不做什么
@@ -160,9 +160,13 @@ curl -X POST http://localhost:8080/analyze \
   "ok": true,
   "data": {
     "summary": "后半段输出下降，循环稳定性不足。",
-    "problems": [
-      "DOT 覆盖率偏低",
-      "普攻占比偏高"
+    "issues": [
+      {
+        "title": "DOT 覆盖率偏低",
+        "description": "DOT 输出占比偏低，核心输出机制未充分发挥。",
+        "severity": "medium",
+        "evidence": ["DOT 覆盖率偏低", "普攻占比偏高"]
+      }
     ],
     "suggestions": [
       "优先保证 DOT 技能覆盖",
@@ -187,7 +191,7 @@ curl -X POST http://localhost:8080/tools/convert/analyze-request \
 - 输入：`AnalyzeRequest`（规范化战斗输入）
 - 输出：`AnalyzeResult`（结构化分析结果）
   - `summary`: 一句话结论
-  - `problems`: 主要问题列表
+  - `issues`: 结构化问题列表（title / description / severity / evidence）
   - `suggestions`: 建议列表
   - `raw_text`: 调试阶段保留的模型原始文本（可选）
 

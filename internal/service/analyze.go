@@ -46,6 +46,20 @@ type analyzePromptDiagnosis struct {
 	Details  string `json:"details,omitempty"`
 }
 
+type llmAnalyzeResult struct {
+	Summary     string            `json:"summary"`
+	Issues      []llmAnalyzeIssue `json:"issues"`
+	Problems    []string          `json:"problems"`
+	Suggestions []string          `json:"suggestions"`
+}
+
+type llmAnalyzeIssue struct {
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Severity    string   `json:"severity"`
+	Evidence    []string `json:"evidence"`
+}
+
 // AnalyzeService 串联 prompt 组装与模型调用。
 type AnalyzeService struct {
 	client *llm.Client
@@ -95,10 +109,10 @@ func (s *AnalyzeService) Analyze(ctx context.Context, req model.AnalyzeRequest) 
 	}
 	result.RawText = text
 	log.Printf(
-		"component=analyze_service request_id=%s event=analyze_done summary_len=%d problems=%d suggestions=%d raw_text_len=%d",
+		"component=analyze_service request_id=%s event=analyze_done summary_len=%d issues=%d suggestions=%d raw_text_len=%d",
 		requestID,
 		len(result.Summary),
-		len(result.Problems),
+		len(result.Issues),
 		len(result.Suggestions),
 		len(text),
 	)
@@ -120,14 +134,24 @@ func buildAnalyzePrompt(req model.AnalyzeRequest) (string, error) {
 	builder.WriteString("\n\n输出格式：")
 	builder.WriteString("\n{")
 	builder.WriteString("\n  \"summary\": \"一句话总结\",")
-	builder.WriteString("\n  \"problems\": [\"问题1\", \"问题2\"],")
+	builder.WriteString("\n  \"issues\": [")
+	builder.WriteString("\n    {")
+	builder.WriteString("\n      \"title\": \"问题标题\",")
+	builder.WriteString("\n      \"description\": \"问题描述\",")
+	builder.WriteString("\n      \"severity\": \"low|medium|high\",")
+	builder.WriteString("\n      \"evidence\": [\"证据1\", \"证据2\"]")
+	builder.WriteString("\n    }")
+	builder.WriteString("\n  ],")
 	builder.WriteString("\n  \"suggestions\": [\"建议1\", \"建议2\"]")
 	builder.WriteString("\n}")
 	builder.WriteString("\n\n要求：")
 	builder.WriteString("\n1. summary 必须是字符串且不能为空。")
-	builder.WriteString("\n2. problems 必须是字符串数组。")
-	builder.WriteString("\n3. suggestions 必须是字符串数组。")
-	builder.WriteString("\n4. 即使信息不足也要返回合法 JSON。")
+	builder.WriteString("\n2. issues 必须是数组。")
+	builder.WriteString("\n3. 每个 issue 必须包含 title、description、severity、evidence。")
+	builder.WriteString("\n4. severity 只能是 low、medium、high。")
+	builder.WriteString("\n5. suggestions 必须是字符串数组。")
+	builder.WriteString("\n6. 即使信息不足也要返回合法 JSON。")
+	builder.WriteString("\n7. 不要输出 markdown 代码块。")
 	builder.WriteString("\n\n规范化战斗输入：\n")
 	builder.Write(reqJSON)
 	return builder.String(), nil
@@ -188,29 +212,39 @@ func parseAnalyzeResult(raw string) (model.AnalyzeResult, error) {
 		return model.AnalyzeResult{}, fmt.Errorf("%w: empty response text", ErrInvalidLLMJSON)
 	}
 
-	parsed, err := unmarshalAnalyzeResult(raw)
+	parsed, err := unmarshalLLMAnalyzeResult(raw)
 	if err != nil {
 		cleaned := extractJSON(raw)
 		if cleaned == "" {
 			return model.AnalyzeResult{}, fmt.Errorf("%w: %v", ErrInvalidLLMJSON, err)
 		}
-		parsed, err = unmarshalAnalyzeResult(cleaned)
+		parsed, err = unmarshalLLMAnalyzeResult(cleaned)
 		if err != nil {
 			return model.AnalyzeResult{}, fmt.Errorf("%w: %v", ErrInvalidLLMJSON, err)
 		}
 	}
 
-	if err := normalizeAnalyzeResult(&parsed); err != nil {
+	result := model.AnalyzeResult{
+		Summary:     parsed.Summary,
+		Suggestions: parsed.Suggestions,
+	}
+	if len(parsed.Issues) > 0 {
+		result.Issues = convertLLMIssues(parsed.Issues)
+	} else if len(parsed.Problems) > 0 {
+		result.Issues = convertProblemsToIssues(parsed.Problems, parsed.Summary)
+	}
+
+	if err := normalizeAnalyzeResult(&result); err != nil {
 		return model.AnalyzeResult{}, err
 	}
 
-	return parsed, nil
+	return result, nil
 }
 
-func unmarshalAnalyzeResult(raw string) (model.AnalyzeResult, error) {
-	var result model.AnalyzeResult
+func unmarshalLLMAnalyzeResult(raw string) (llmAnalyzeResult, error) {
+	var result llmAnalyzeResult
 	if err := json.Unmarshal([]byte(raw), &result); err != nil {
-		return model.AnalyzeResult{}, err
+		return llmAnalyzeResult{}, err
 	}
 	return result, nil
 }
@@ -294,13 +328,51 @@ func extractFirstJSONObject(raw string) string {
 	return ""
 }
 
+func convertLLMIssues(items []llmAnalyzeIssue) []model.AnalyzeIssue {
+	if len(items) == 0 {
+		return nil
+	}
+
+	result := make([]model.AnalyzeIssue, 0, len(items))
+	for _, item := range items {
+		result = append(result, model.AnalyzeIssue{
+			Title:       item.Title,
+			Description: item.Description,
+			Severity:    item.Severity,
+			Evidence:    item.Evidence,
+		})
+	}
+	return result
+}
+
+func convertProblemsToIssues(problems []string, summary string) []model.AnalyzeIssue {
+	if len(problems) == 0 {
+		return nil
+	}
+
+	result := make([]model.AnalyzeIssue, 0, len(problems))
+	for _, problem := range problems {
+		problem = strings.TrimSpace(problem)
+		if problem == "" {
+			continue
+		}
+		result = append(result, model.AnalyzeIssue{
+			Title:       deriveIssueTitle(problem),
+			Description: problem,
+			Severity:    inferSeverityFromProblem(problem),
+			Evidence:    buildEvidence(problem, summary, nil),
+		})
+	}
+	return result
+}
+
 func normalizeAnalyzeResult(result *model.AnalyzeResult) error {
 	result.Summary = strings.TrimSpace(result.Summary)
-	result.Problems = normalizeStringSlice(result.Problems)
 	result.Suggestions = normalizeStringSlice(result.Suggestions)
+	result.Issues = normalizeIssues(result.Issues, result.Summary)
 
-	if result.Problems == nil {
-		result.Problems = []string{}
+	if result.Issues == nil {
+		result.Issues = []model.AnalyzeIssue{}
 	}
 	if result.Suggestions == nil {
 		result.Suggestions = []string{}
@@ -309,6 +381,100 @@ func normalizeAnalyzeResult(result *model.AnalyzeResult) error {
 		return fmt.Errorf("%w: summary is required", ErrInvalidAnalyzeResult)
 	}
 	return nil
+}
+
+func normalizeIssues(items []model.AnalyzeIssue, summary string) []model.AnalyzeIssue {
+	if len(items) == 0 {
+		return nil
+	}
+
+	result := make([]model.AnalyzeIssue, 0, len(items))
+	for _, item := range items {
+		title := strings.TrimSpace(item.Title)
+		description := strings.TrimSpace(item.Description)
+		if title == "" && description == "" {
+			continue
+		}
+		if title == "" {
+			title = deriveIssueTitle(description)
+		}
+		if description == "" {
+			description = title
+		}
+
+		result = append(result, model.AnalyzeIssue{
+			Title:       title,
+			Description: description,
+			Severity:    normalizeSeverity(item.Severity),
+			Evidence:    buildEvidence(description, summary, item.Evidence),
+		})
+	}
+
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+func normalizeSeverity(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "low", "medium", "high":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return "medium"
+	}
+}
+
+func inferSeverityFromProblem(problem string) string {
+	if containsAny(problem, "过低", "中断", "停止", "严重", "风险高", "不再") {
+		return "high"
+	}
+	if containsAny(problem, "不足", "偏低", "偏高", "过长", "较慢") {
+		return "medium"
+	}
+	return "low"
+}
+
+func deriveIssueTitle(problem string) string {
+	problem = strings.TrimSpace(problem)
+	if problem == "" {
+		return ""
+	}
+
+	cutSet := "，。,；;：:"
+	for _, separator := range cutSet {
+		if index := strings.IndexRune(problem, separator); index > 0 {
+			return strings.TrimSpace(problem[:index])
+		}
+	}
+
+	if len([]rune(problem)) > 18 {
+		runes := []rune(problem)
+		return strings.TrimSpace(string(runes[:18]))
+	}
+	return problem
+}
+
+func buildEvidence(problem, summary string, existing []string) []string {
+	evidence := normalizeStringSlice(existing)
+	if len(evidence) > 0 {
+		return evidence
+	}
+
+	fallback := []string{}
+	problem = strings.TrimSpace(problem)
+	summary = strings.TrimSpace(summary)
+
+	if problem != "" {
+		fallback = append(fallback, problem)
+	}
+	if summary != "" && summary != problem {
+		fallback = append(fallback, summary)
+	}
+	if len(fallback) == 0 {
+		fallback = append(fallback, "由模型总结结果推断")
+	}
+	return fallback
 }
 
 func normalizeStringSlice(values []string) []string {
@@ -324,7 +490,19 @@ func normalizeStringSlice(values []string) []string {
 		}
 		result = append(result, item)
 	}
+	if len(result) == 0 {
+		return nil
+	}
 	return result
+}
+
+func containsAny(text string, keywords ...string) bool {
+	for _, keyword := range keywords {
+		if keyword != "" && strings.Contains(text, keyword) {
+			return true
+		}
+	}
+	return false
 }
 
 func shrinkForLog(text string, max int) string {
