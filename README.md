@@ -111,45 +111,15 @@ curl http://localhost:8080/health
 ### 2) `POST /analyze`
 
 请求（最小示例）：
-`schema_version` 省略时默认按 `v1` 处理。
 
 ```bash
 curl -X POST http://localhost:8080/analyze \
   -H "Content-Type: application/json" \
   --data '{
-    "schema_version": "v1",
-    "metadata": {
-      "battle_type": "baseline",
-      "build_tags": ["dot", "single"],
-      "floor_id": "floor-883",
-      "notable_rules": ["no_heal"],
-      "floor_modifiers": ["low_mana"],
-      "notes": "custom note"
-    },
-    "summary": {
-      "win": true,
-      "duration": 78,
-      "likely_reason": "rotation breaks in late phase"
-    },
-    "metrics": {
-      "damage_by_source": {
-        "dot": 120.5,
-        "direct": 80.0,
-        "basic_attack": 20.0
-      },
-      "skill_usage": {
-        "contagion_wave": 9,
-        "toxic_lance": 17
-      }
-    },
-    "diagnosis": [
-      {
-        "code": "LOW_DOT_RATIO",
-        "severity": "warn",
-        "message": "dot ratio is low",
-        "details": {"dotRatio": 0.41}
-      }
-    ]
+    "log_text": "00:00 cast skill_a ...",
+    "battle_type": "boss_pve",
+    "build_tags": ["dot", "single"],
+    "notes": "phase2 dps drop"
   }'
 ```
 
@@ -176,6 +146,25 @@ curl -X POST http://localhost:8080/analyze \
   }
 }
 ```
+
+参数校验失败统一返回：
+
+```json
+{
+  "error": {
+    "code": "EMPTY_LOG_TEXT",
+    "message": "log_text is required"
+  }
+}
+```
+
+当前 `/analyze` 关键错误码：
+- `INVALID_JSON`
+- `EMPTY_LOG_TEXT`
+- `LOG_TOO_LONG`
+- `INVALID_BATTLE_TYPE`
+- `INVALID_BUILD_TAGS`
+- `NOTES_TOO_LONG`
 
 ### 3) `POST /tools/convert/analyze-request`（可选）
 

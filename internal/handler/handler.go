@@ -1,14 +1,23 @@
 package handler
 
-import "github.com/feiai2017/battle_mind/internal/service"
+import (
+	"context"
+
+	"github.com/feiai2017/battle_mind/internal/model"
+	"github.com/feiai2017/battle_mind/internal/service"
+)
+
+type AnalyzeService interface {
+	Analyze(ctx context.Context, req model.AnalyzeRequest) (model.AnalyzeResult, error)
+}
 
 // internal/handler: HTTP 接口层。
 type Handler struct {
-	analyzeService *service.AnalyzeService
+	analyzeService AnalyzeService
 }
 
-func New(analyzeService ...*service.AnalyzeService) *Handler {
-	var svc *service.AnalyzeService
+func New(analyzeService ...AnalyzeService) *Handler {
+	var svc AnalyzeService
 	if len(analyzeService) > 0 {
 		svc = analyzeService[0]
 	}
@@ -16,3 +25,5 @@ func New(analyzeService ...*service.AnalyzeService) *Handler {
 		analyzeService: svc,
 	}
 }
+
+var _ AnalyzeService = (*service.AnalyzeService)(nil)

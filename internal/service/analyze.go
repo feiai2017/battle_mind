@@ -1,7 +1,6 @@
 package service
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -18,32 +17,11 @@ var (
 	ErrInvalidAnalyzeResult = errors.New("invalid analyze result")
 )
 
-const (
-	maxPromptDiagnosisItems = 20
-	maxPromptDetailsChars   = 512
-)
-
 type analyzePromptInput struct {
-	Metadata  analyzePromptMetadata    `json:"metadata"`
-	Summary   model.BattleSummary      `json:"summary"`
-	Metrics   model.BattleMetrics      `json:"metrics"`
-	Diagnosis []analyzePromptDiagnosis `json:"diagnosis,omitempty"`
-}
-
-type analyzePromptMetadata struct {
-	BattleType     string   `json:"battle_type"`
-	BuildTags      []string `json:"build_tags,omitempty"`
-	FloorID        string   `json:"floor_id,omitempty"`
-	NotableRules   []string `json:"notable_rules,omitempty"`
-	FloorModifiers []string `json:"floor_modifiers,omitempty"`
-	Notes          string   `json:"notes,omitempty"`
-}
-
-type analyzePromptDiagnosis struct {
-	Code     string `json:"code"`
-	Severity string `json:"severity"`
-	Message  string `json:"message"`
-	Details  string `json:"details,omitempty"`
+	LogText    string   `json:"log_text"`
+	BattleType string   `json:"battle_type,omitempty"`
+	BuildTags  []string `json:"build_tags,omitempty"`
+	Notes      string   `json:"notes,omitempty"`
 }
 
 type llmAnalyzeResult struct {
@@ -85,10 +63,10 @@ func (s *AnalyzeService) Analyze(ctx context.Context, req model.AnalyzeRequest) 
 		return model.AnalyzeResult{}, fmt.Errorf("build analyze prompt: %w", err)
 	}
 	log.Printf(
-		"component=analyze_service request_id=%s event=prompt_built prompt_len=%d diagnosis_count=%d",
+		"component=analyze_service request_id=%s event=prompt_built prompt_len=%d build_tags_count=%d",
 		requestID,
 		len(prompt),
-		len(req.Diagnosis),
+		len(req.BuildTags),
 	)
 
 	text, err := s.client.Generate(ctx, prompt)
@@ -158,52 +136,12 @@ func buildAnalyzePrompt(req model.AnalyzeRequest) (string, error) {
 }
 
 func buildPromptInput(req model.AnalyzeRequest) analyzePromptInput {
-	input := analyzePromptInput{
-		Metadata: analyzePromptMetadata{
-			BattleType:     req.Metadata.BattleType,
-			BuildTags:      req.Metadata.BuildTags,
-			FloorID:        req.Metadata.FloorID,
-			NotableRules:   req.Metadata.NotableRules,
-			FloorModifiers: req.Metadata.FloorModifiers,
-			Notes:          req.Metadata.Notes,
-		},
-		Summary: req.Summary,
-		Metrics: req.Metrics,
+	return analyzePromptInput{
+		LogText:    req.LogText,
+		BattleType: req.BattleType,
+		BuildTags:  req.BuildTags,
+		Notes:      req.Notes,
 	}
-
-	diagnosis := req.Diagnosis
-	if len(diagnosis) > maxPromptDiagnosisItems {
-		diagnosis = diagnosis[:maxPromptDiagnosisItems]
-	}
-	if len(diagnosis) > 0 {
-		input.Diagnosis = make([]analyzePromptDiagnosis, 0, len(diagnosis))
-		for _, item := range diagnosis {
-			input.Diagnosis = append(input.Diagnosis, analyzePromptDiagnosis{
-				Code:     item.Code,
-				Severity: item.Severity,
-				Message:  item.Message,
-				Details:  diagnosisDetailsPreview(item.Details),
-			})
-		}
-	}
-
-	return input
-}
-
-func diagnosisDetailsPreview(raw json.RawMessage) string {
-	trimmed := strings.TrimSpace(string(raw))
-	if trimmed == "" || trimmed == "null" {
-		return ""
-	}
-
-	var compact bytes.Buffer
-	if err := json.Compact(&compact, raw); err == nil {
-		trimmed = compact.String()
-	}
-	if len(trimmed) <= maxPromptDetailsChars {
-		return trimmed
-	}
-	return trimmed[:maxPromptDetailsChars] + "...(truncated)"
 }
 
 func parseAnalyzeResult(raw string) (model.AnalyzeResult, error) {

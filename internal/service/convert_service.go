@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"math"
 	"strings"
 
@@ -11,15 +12,22 @@ import (
 
 // ConvertBattleReportToAnalyzeRequest 将 battle report 最小结构转换为 AnalyzeRequest。
 func ConvertBattleReportToAnalyzeRequest(report model.BattleReport) model.AnalyzeRequest {
+	buildTags := buildTags(report)
+	notes := buildNotes(report)
+
 	return model.AnalyzeRequest{
+		LogText:       buildConvertedLogText(report),
+		BattleType:    strings.TrimSpace(report.FloorContext.PressureType),
+		BuildTags:     buildTags,
+		Notes:         notes,
 		SchemaVersion: model.AnalyzeRequestSchemaVersionV1,
 		Metadata: model.AnalyzeMetadata{
 			BattleType:     report.FloorContext.PressureType,
-			BuildTags:      buildTags(report),
+			BuildTags:      buildTags,
 			FloorID:        strings.TrimSpace(report.FloorID),
 			NotableRules:   normalizeStringList(report.FloorContext.NotableRules),
 			FloorModifiers: normalizeStringList(report.FloorContext.FloorModifiers),
-			Notes:          buildNotes(report),
+			Notes:          notes,
 		},
 		Summary: model.BattleSummary{
 			Win:          report.ResultSummary.Win,
@@ -72,6 +80,35 @@ func buildNotes(report model.BattleReport) string {
 		parts = append(parts, "modifiers="+strings.Join(report.FloorContext.FloorModifiers, ","))
 	}
 	return strings.Join(parts, "; ")
+}
+
+func buildConvertedLogText(report model.BattleReport) string {
+	var parts []string
+
+	if pressureType := strings.TrimSpace(report.FloorContext.PressureType); pressureType != "" {
+		parts = append(parts, "battle_type="+pressureType)
+	}
+	if id := strings.TrimSpace(report.FloorID); id != "" {
+		parts = append(parts, "floor_id="+id)
+	}
+	parts = append(parts, "win="+boolToString(report.ResultSummary.Win))
+	if report.ResultSummary.Duration > 0 {
+		parts = append(parts, "duration="+fmt.Sprintf("%.1f", report.ResultSummary.Duration))
+	}
+	if reason := strings.TrimSpace(report.ResultSummary.LikelyReason); reason != "" {
+		parts = append(parts, "likely_reason="+reason)
+	}
+	if len(parts) == 0 {
+		return "converted battle report"
+	}
+	return strings.Join(parts, "; ")
+}
+
+func boolToString(value bool) string {
+	if value {
+		return "true"
+	}
+	return "false"
 }
 
 func aggregateDamage(items []model.DamageMetric) model.DamageBySource {

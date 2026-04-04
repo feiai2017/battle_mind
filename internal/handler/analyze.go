@@ -30,9 +30,9 @@ func (h *Handler) Analyze(w http.ResponseWriter, r *http.Request) {
 
 	if h.analyzeService == nil {
 		log.Printf("component=analyze_handler request_id=%s event=service_missing", requestID)
-		writeJSON(w, http.StatusInternalServerError, map[string]any{
-			"ok":    false,
-			"error": "analyze service is not configured",
+		writeAppError(w, http.StatusInternalServerError, model.AppError{
+			Code:    model.ErrCodeInternalError,
+			Message: "analyze service is not configured",
 		})
 		return
 	}
@@ -40,25 +40,22 @@ func (h *Handler) Analyze(w http.ResponseWriter, r *http.Request) {
 	var req model.AnalyzeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		log.Printf("component=analyze_handler request_id=%s event=decode_failed error=%q", requestID, err.Error())
-		writeJSON(w, http.StatusBadRequest, map[string]any{
-			"ok":    false,
-			"error": fmt.Sprintf("invalid analyze request json: %v", err),
+		writeAppError(w, http.StatusBadRequest, model.AppError{
+			Code:    model.ErrCodeInvalidJSON,
+			Message: "invalid analyze request json",
 		})
 		return
 	}
-	if err := req.NormalizeAndValidate(); err != nil {
-		log.Printf("component=analyze_handler request_id=%s event=validate_failed error=%q", requestID, err.Error())
-		writeJSON(w, http.StatusBadRequest, map[string]any{
-			"ok":    false,
-			"error": fmt.Sprintf("invalid analyze request: %v", err),
-		})
+	if appErr := req.NormalizeAndValidate(); appErr != nil {
+		log.Printf("component=analyze_handler request_id=%s event=validate_failed code=%s error=%q", requestID, appErr.Code, appErr.Message)
+		writeAppError(w, http.StatusBadRequest, *appErr)
 		return
 	}
 	log.Printf(
-		"component=analyze_handler request_id=%s event=request_decoded battle_type=%s diagnosis_count=%d",
+		"component=analyze_handler request_id=%s event=request_decoded battle_type=%s build_tags_count=%d",
 		requestID,
-		req.Metadata.BattleType,
-		len(req.Diagnosis),
+		req.BattleType,
+		len(req.BuildTags),
 	)
 
 	ctx := llm.WithRequestID(r.Context(), requestID)
@@ -84,31 +81,34 @@ func writeAnalyzeError(w http.ResponseWriter, requestID string, err error) {
 	log.Printf("component=analyze_handler request_id=%s event=request_failed error=%q", requestID, err.Error())
 
 	var statusErr *llm.HTTPStatusError
+	var appErr *model.AppError
 	switch {
+	case errors.As(err, &appErr):
+		writeAppError(w, http.StatusBadRequest, *appErr)
 	case errors.As(err, &statusErr):
-		writeJSON(w, http.StatusBadGateway, map[string]any{
-			"ok":    false,
-			"error": statusErr.Error(),
+		writeAppError(w, http.StatusBadGateway, model.AppError{
+			Code:    model.ErrCodeAnalyzeFailed,
+			Message: statusErr.Error(),
 		})
 	case errors.Is(err, llm.ErrEmptyPrompt):
-		writeJSON(w, http.StatusBadRequest, map[string]any{
-			"ok":    false,
-			"error": err.Error(),
+		writeAppError(w, http.StatusBadRequest, model.AppError{
+			Code:    model.ErrCodeInvalidArgument,
+			Message: err.Error(),
 		})
 	case errors.Is(err, llm.ErrEmptyResponse), errors.Is(err, llm.ErrTextNotFound):
-		writeJSON(w, http.StatusBadGateway, map[string]any{
-			"ok":    false,
-			"error": err.Error(),
+		writeAppError(w, http.StatusBadGateway, model.AppError{
+			Code:    model.ErrCodeAnalyzeFailed,
+			Message: err.Error(),
 		})
 	case errors.Is(err, service.ErrInvalidLLMJSON), errors.Is(err, service.ErrInvalidAnalyzeResult):
-		writeJSON(w, http.StatusBadGateway, map[string]any{
-			"ok":    false,
-			"error": err.Error(),
+		writeAppError(w, http.StatusBadGateway, model.AppError{
+			Code:    model.ErrCodeAnalyzeFailed,
+			Message: err.Error(),
 		})
 	default:
-		writeJSON(w, http.StatusBadGateway, map[string]any{
-			"ok":    false,
-			"error": err.Error(),
+		writeAppError(w, http.StatusBadGateway, model.AppError{
+			Code:    model.ErrCodeAnalyzeFailed,
+			Message: err.Error(),
 		})
 	}
 }
