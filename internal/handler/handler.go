@@ -9,6 +9,7 @@ import (
 
 type AnalyzeService interface {
 	Analyze(ctx context.Context, req model.AnalyzeRequest) (model.AnalyzeResult, error)
+	ModelName() string
 }
 
 // internal/handler: HTTP 接口层。

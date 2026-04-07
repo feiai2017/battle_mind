@@ -11,12 +11,14 @@ import (
 const (
 	defaultPort           = 8080
 	defaultTimeoutSeconds = 30
+	defaultLogFilePath    = "logs/server.log"
 )
 
-// internal/config: 配置读取与管理。
+// Config holds the minimal runtime configuration for the service.
 type Config struct {
-	Server ServerConfig `json:"server"`
-	Model  ModelConfig  `json:"model"`
+	Server  ServerConfig  `json:"server"`
+	Model   ModelConfig   `json:"model"`
+	Logging LoggingConfig `json:"logging"`
 }
 
 type ServerConfig struct {
@@ -30,7 +32,11 @@ type ModelConfig struct {
 	TimeoutSeconds int    `json:"timeout_seconds"`
 }
 
-// Load 从配置文件读取并校验最小配置。
+type LoggingConfig struct {
+	FilePath string `json:"file_path"`
+}
+
+// Load reads configuration from a JSON file and applies minimal defaults.
 func Load(path string) (*Config, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, fmt.Errorf("config path is empty")
@@ -68,6 +74,10 @@ func applyDefaults(cfg *Config) {
 	cfg.Model.APIKey = strings.TrimSpace(cfg.Model.APIKey)
 	cfg.Model.BaseURL = strings.TrimSpace(cfg.Model.BaseURL)
 	cfg.Model.Model = strings.TrimSpace(cfg.Model.Model)
+	cfg.Logging.FilePath = strings.TrimSpace(cfg.Logging.FilePath)
+	if cfg.Logging.FilePath == "" {
+		cfg.Logging.FilePath = defaultLogFilePath
+	}
 }
 
 func validate(cfg *Config) error {

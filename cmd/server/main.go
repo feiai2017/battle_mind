@@ -9,10 +9,11 @@ import (
 	"github.com/feiai2017/battle_mind/internal/config"
 	"github.com/feiai2017/battle_mind/internal/handler"
 	"github.com/feiai2017/battle_mind/internal/llm"
+	"github.com/feiai2017/battle_mind/internal/logging"
 	"github.com/feiai2017/battle_mind/internal/service"
 )
 
-// cmd/server: 程序入口。
+// cmd/server: program entrypoint.
 func main() {
 	cfg, err := config.Load("config.json")
 	if err != nil {
@@ -20,19 +21,30 @@ func main() {
 		os.Exit(1)
 	}
 
+	logCloser, err := logging.SetupFileLogging(cfg.Logging.FilePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "startup failed: setup logging: %v\n", err)
+		os.Exit(1)
+	}
+	if logCloser != nil {
+		defer logCloser.Close()
+	}
+
 	fmt.Printf(
-		"config loaded: port=%d, base_url=%s, model=%s, timeout_seconds=%d\n",
+		"config loaded: port=%d, base_url=%s, model=%s, timeout_seconds=%d, log_file=%s\n",
 		cfg.Server.Port,
 		cfg.Model.BaseURL,
 		cfg.Model.Model,
 		cfg.Model.TimeoutSeconds,
+		cfg.Logging.FilePath,
 	)
 	log.Printf(
-		"component=server event=config_loaded port=%d base_url=%s model=%s timeout_seconds=%d",
+		"component=server event=config_loaded port=%d base_url=%s model=%s timeout_seconds=%d log_file=%s",
 		cfg.Server.Port,
 		cfg.Model.BaseURL,
 		cfg.Model.Model,
 		cfg.Model.TimeoutSeconds,
+		cfg.Logging.FilePath,
 	)
 
 	llmClient, err := llm.NewClient(cfg.Model)

@@ -36,6 +36,10 @@ type textGenerator interface {
 	Generate(ctx context.Context, prompt string) (string, error)
 }
 
+type modelNamer interface {
+	ModelName() string
+}
+
 // AnalyzeService handles prompt building, model invocation, JSON parsing, and one repair retry.
 type AnalyzeService struct {
 	client textGenerator
@@ -43,6 +47,17 @@ type AnalyzeService struct {
 
 func NewAnalyzeService(client *llm.Client) *AnalyzeService {
 	return &AnalyzeService{client: client}
+}
+
+func (s *AnalyzeService) ModelName() string {
+	if s == nil || s.client == nil {
+		return ""
+	}
+	namer, ok := s.client.(modelNamer)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(namer.ModelName())
 }
 
 func (s *AnalyzeService) Analyze(ctx context.Context, req model.AnalyzeRequest) (model.AnalyzeResult, error) {

@@ -41,6 +41,13 @@ type Client struct {
 	httpClient *http.Client
 }
 
+func (c *Client) ModelName() string {
+	if c == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.model)
+}
+
 func WithRequestID(ctx context.Context, requestID string) context.Context {
 	return context.WithValue(ctx, requestIDContextKey, strings.TrimSpace(requestID))
 }
