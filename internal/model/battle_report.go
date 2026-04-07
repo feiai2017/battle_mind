@@ -2,13 +2,15 @@ package model
 
 import "encoding/json"
 
-// BattleReport 是转换工具的最小输入模型，只覆盖映射 AnalyzeRequest 所需字段。
+// BattleReport is the minimal structured input used by converters and rules.
+// It intentionally keeps only the fields the service needs to consume.
 type BattleReport struct {
 	FloorID          string           `json:"floorId"`
 	FloorContext     FloorContext     `json:"floorContext"`
 	BuildContext     BuildContext     `json:"buildContext"`
 	ResultSummary    ResultSummary    `json:"resultSummary"`
 	AggregateMetrics AggregateMetrics `json:"aggregateMetrics"`
+	Events           []ReportEvent    `json:"events"`
 	Diagnosis        []RawDiagnosis   `json:"diagnosis"`
 }
 
@@ -47,6 +49,19 @@ type DamageMetric struct {
 type SkillUsage struct {
 	SkillID string `json:"skillId"`
 	Casts   int    `json:"casts"`
+}
+
+type ReportEvent struct {
+	Time       float64         `json:"time"`
+	Category   string          `json:"category"`
+	Type       string          `json:"type"`
+	SourceID   *string         `json:"sourceId"`
+	SourceName *string         `json:"sourceName"`
+	TargetID   json.RawMessage `json:"targetId"`
+	TargetName *string         `json:"targetName"`
+	Amount     *float64        `json:"amount"`
+	Tags       []string        `json:"tags"`
+	Metadata   json.RawMessage `json:"metadata"`
 }
 
 type RawDiagnosis struct {
