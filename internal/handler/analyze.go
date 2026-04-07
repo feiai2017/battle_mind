@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/feiai2017/battle_mind/internal/llm"
@@ -17,6 +18,7 @@ import (
 
 const (
 	requestIDHeader          = "X-Request-ID"
+	simulateTimeoutHeader    = "X-Debug-Simulate-Timeout"
 	logErrorReasonNone       = "NONE"
 	logErrorReasonTimeout    = "MODEL_TIMEOUT"
 	logErrorReasonRequest    = "MODEL_REQUEST_FAILED"
@@ -122,6 +124,9 @@ func (h *Handler) Analyze(w http.ResponseWriter, r *http.Request) {
 	)
 
 	ctx := llm.WithRequestID(r.Context(), requestID)
+	if strings.TrimSpace(r.Header.Get(simulateTimeoutHeader)) == "1" {
+		ctx = llm.WithSimulationMode(ctx, "timeout")
+	}
 	result, err := h.analyzeService.Analyze(ctx, req)
 	if err != nil {
 		statusCode, appErr, errorReasonValue := mapAnalyzeError(err)

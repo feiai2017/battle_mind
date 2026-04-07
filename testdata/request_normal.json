@@ -1,0 +1,40 @@
+{
+  "metadata": {
+    "battle_type": "baseline",
+    "build_tags": [
+      "dot",
+      "single",
+      "starter"
+    ],
+    "notes": "sample normal request"
+  },
+  "summary": {
+    "win": true,
+    "duration": 78,
+    "likely_reason": "rotation efficiency is low"
+  },
+  "metrics": {
+    "damage_by_source": {
+      "dot": 411,
+      "direct": 362,
+      "basic_attack": 227
+    },
+    "skill_usage": {
+      "contagion_wave": 9,
+      "rupture_bloom": 5,
+      "toxic_lance": 17
+    }
+  },
+  "diagnosis": [
+    {
+      "code": "LOW_SURVIVAL",
+      "severity": "warn",
+      "message": "hp ratio is low"
+    },
+    {
+      "code": "LOW_DOT_RATIO",
+      "severity": "warn",
+      "message": "dot ratio is below expectation"
+    }
+  ]
+}

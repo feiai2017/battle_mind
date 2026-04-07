@@ -1,0 +1,31 @@
+{
+  "metadata": {
+    "battle_type": "baseline",
+    "build_tags": [
+      "dot"
+    ],
+    "notes": "timeout simulation sample"
+  },
+  "summary": {
+    "win": false,
+    "duration": 42,
+    "likely_reason": "sample timeout case"
+  },
+  "metrics": {
+    "damage_by_source": {
+      "dot": 120,
+      "direct": 80,
+      "basic_attack": 20
+    },
+    "skill_usage": {
+      "contagion_wave": 3
+    }
+  },
+  "diagnosis": [
+    {
+      "code": "SAMPLE_TIMEOUT",
+      "severity": "info",
+      "message": "simulate timeout through request header"
+    }
+  ]
+}

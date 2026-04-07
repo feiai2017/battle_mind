@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -22,7 +23,10 @@ var (
 
 type contextKey string
 
-const requestIDContextKey contextKey = "request_id"
+const (
+	requestIDContextKey      contextKey = "request_id"
+	simulationModeContextKey contextKey = "simulation_mode"
+)
 
 type HTTPStatusError struct {
 	StatusCode int
@@ -60,6 +64,18 @@ func RequestIDFromContext(ctx context.Context) string {
 	return strings.TrimSpace(value)
 }
 
+func WithSimulationMode(ctx context.Context, mode string) context.Context {
+	return context.WithValue(ctx, simulationModeContextKey, strings.TrimSpace(mode))
+}
+
+func SimulationModeFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	value, _ := ctx.Value(simulationModeContextKey).(string)
+	return strings.TrimSpace(value)
+}
+
 func NewClient(cfg config.ModelConfig) (*Client, error) {
 	if strings.TrimSpace(cfg.BaseURL) == "" {
 		return nil, fmt.Errorf("llm config base_url is required")
@@ -92,6 +108,10 @@ func (c *Client) Generate(ctx context.Context, prompt string) (string, error) {
 	if prompt == "" {
 		log.Printf("component=llm_client request_id=%s event=reject reason=empty_prompt", requestID)
 		return "", ErrEmptyPrompt
+	}
+	if SimulationModeFromContext(ctx) == "timeout" {
+		log.Printf("component=llm_client request_id=%s event=simulate_timeout model=%s", requestID, c.model)
+		return "", simulatedTimeoutError{}
 	}
 	log.Printf(
 		"component=llm_client request_id=%s event=generate_start model=%s prompt_len=%d",
@@ -238,3 +258,11 @@ type chatCompletionsResponse struct {
 type chatChoice struct {
 	Message chatMessage `json:"message"`
 }
+
+type simulatedTimeoutError struct{}
+
+func (simulatedTimeoutError) Error() string   { return "simulated model timeout" }
+func (simulatedTimeoutError) Timeout() bool   { return true }
+func (simulatedTimeoutError) Temporary() bool { return true }
+
+var _ net.Error = simulatedTimeoutError{}

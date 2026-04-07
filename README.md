@@ -1,22 +1,30 @@
 # BattleMind Analyzer
 
-一个基于 Go 的最小战斗分析服务：输入规范化战斗数据，调用 LLM，输出结构化分析结果。
+一个基于 Go 实现的最小战斗分析服务：接收规范化战斗输入，调用 LLM，返回结构化分析结果。
 
 ## 项目目标
-- 在第一周打通最小闭环：`规范化输入 -> 模型分析 -> 固定 JSON 输出`
-- 提供可本地运行、可通过 HTTP 调用的后端服务
-- 为后续规则校验、前端展示和诊断排序提供稳定数据结构
+
+- 打通最小闭环：`battle report -> AnalyzeRequest -> /analyze -> 结构化结果`
+- 提供一个本地可运行、可调试、可重复验证的分析服务
+- 为后续规则校验、前端展示、诊断排序提供稳定输入输出协议
 
 ## 当前已实现能力
-- `GET /health`：健康检查
-- `POST /analyze`：分析接口（触发真实模型调用）
-- `POST /tools/convert/analyze-request`：battle report 转 AnalyzeRequest（独立工具接口）
-- 配置文件加载（`config.json`）
-- 最小 LLM client（`net/http` + timeout + 错误处理）
-- `/analyze` 结构化输出：`summary` / `issues` / `suggestions`（含调试字段 `raw_text`）
-- 基础容错：支持解析模型输出中的 ```json 代码块包裹
+
+- `GET /health`：最小健康检查
+- `POST /analyze`：分析接口
+- `POST /tools/convert/analyze-request`：battle report 转 AnalyzeRequest
+- `cmd/convertbatch`：批量转换 battle report
+- 配置文件加载：`config.json`
+- 最小 LLM client：`net/http` + timeout + 错误处理
+- `/analyze` 固定 JSON 输出：`summary` / `issues` / `suggestions`
+- 兼容旧格式 `problems -> issues`
+- 模型返回非法 JSON 时，支持一次 repair 重试
+- `/analyze` 请求级日志：`request_id` / `duration_ms` / `model_name` / `error_reason`
+- 日志同时输出到控制台和文件
+- 一键样例验证脚本：`scripts/test_analyze.sh`
 
 ## 当前暂不做什么
+
 - 不做前端页面
 - 不做数据库持久化
 - 不做登录鉴权
@@ -26,19 +34,23 @@
 - 不做生产级部署与监控体系
 
 ## 仓库结构
+
 - `cmd/server`：HTTP 服务启动入口
-- `cmd/convertbatch`：本地批量转换工具（battle report -> analyze_request）
-- `internal/config`：配置读取与校验
-- `internal/handler`：HTTP 层（health / analyze / convert）
-- `internal/service`：业务流程（prompt 构造、结果解析、转换逻辑）
+- `cmd/convertbatch`：批量转换工具
+- `internal/config`：配置读取与默认值处理
+- `internal/handler`：HTTP 层，包含 `health` / `analyze` / `convert`
+- `internal/service`：分析、转换、结果解析流程
 - `internal/llm`：模型调用封装
-- `internal/model`：请求/响应结构定义
-- `testdata`：测试数据目录（默认空骨架）
+- `internal/logging`：标准库日志输出到控制台和文件
+- `internal/model`：请求、响应、battle report 结构定义
+- `scripts`：本地脚本入口
+- `testdata`：请求样例和 battle report 样例
 
 ## 配置说明
-服务默认读取项目根目录 `config.json`。仓库提交了 [config.json.example](./config.json.example) 作为模板。
 
-最小配置如下：
+服务默认读取项目根目录的 `config.json`。仓库提供了 [config.json.example](d:/github.com/battlemind/config.json.example) 作为模板。
+
+最小配置示例：
 
 ```json
 {
@@ -58,18 +70,22 @@
 ```
 
 说明：
-- `api_key` / `base_url` / `model` 为必填
-- `timeout_seconds <= 0` 时默认 `30`
-- 请勿提交真实 `config.json` 与真实密钥
+
+- `model.api_key` / `model.base_url` / `model.model` 为必填
+- `model.timeout_seconds <= 0` 时默认使用 `30`
+- `logging.file_path` 可选，默认是 `logs/server.log`
+- 日志会同时写到控制台和日志文件
+- 不要提交真实 `config.json` 和真实密钥
 
 ## 快速启动
+
 1. 准备配置文件
 
 ```bash
 cp config.json.example config.json
 ```
 
-Windows PowerShell 可用：
+Windows PowerShell：
 
 ```powershell
 Copy-Item config.json.example config.json
@@ -81,7 +97,7 @@ Copy-Item config.json.example config.json
 go run ./cmd/server
 ```
 
-如果本机有 `make`，也可使用：
+或：
 
 ```bash
 make server
@@ -93,17 +109,7 @@ make server
 curl http://localhost:8080/health
 ```
 
-## API 示例
-
-### 1) `GET /health`
-
-请求：
-
-```bash
-curl http://localhost:8080/health
-```
-
-响应：
+预期返回：
 
 ```json
 {
@@ -111,16 +117,23 @@ curl http://localhost:8080/health
 }
 ```
 
-### 2) `POST /analyze`
+## API 示例
 
-请求（最小示例）：
+### `POST /analyze`
+
+当前 `/analyze` 支持两类输入：
+
+- 旧方式：包含 `log_text`
+- 当前主方式：传入结构化 `AnalyzeRequest`
+
+结构化请求示例：
 
 ```bash
 curl -X POST http://localhost:8080/analyze \
   -H "Content-Type: application/json" \
   --data '{
     "metadata": {
-      "battle_type": "boss_pve",
+      "battle_type": "baseline",
       "build_tags": ["dot", "single"],
       "notes": "phase2 dps drop"
     },
@@ -150,31 +163,34 @@ curl -X POST http://localhost:8080/analyze \
   }'
 ```
 
-响应（当前真实外层包装）：
+返回示例：
 
 ```json
 {
   "ok": true,
   "data": {
-    "summary": "后半段输出下降，循环稳定性不足。",
+    "summary": "战斗获胜，但循环效率不足，DOT 占比偏低。",
     "issues": [
       {
-        "title": "DOT 覆盖率偏低",
-        "description": "DOT 输出占比偏低，核心输出机制未充分发挥。",
+        "title": "DOT 占比偏低",
+        "description": "当前构筑预期依赖 DOT 输出，但实际表现不足。",
         "severity": "medium",
-        "evidence": ["DOT 覆盖率偏低", "普攻占比偏高"]
+        "evidence": [
+          "DOT 伤害占比偏低",
+          "普攻占比偏高"
+        ]
       }
     ],
     "suggestions": [
-      "优先保证 DOT 技能覆盖",
-      "减少普攻填充，优化资源循环"
+      "优化 DOT 技能覆盖",
+      "减少普攻填充"
     ],
-    "raw_text": "{...模型原始文本...}"
+    "raw_text": "{...model raw output...}"
   }
 }
 ```
 
-参数校验失败统一返回：
+错误返回示例：
 
 ```json
 {
@@ -185,31 +201,107 @@ curl -X POST http://localhost:8080/analyze \
 }
 ```
 
-当前 `/analyze` 关键错误码：
+当前常见错误码：
+
 - `INVALID_JSON`
 - `EMPTY_LOG_TEXT`
 - `LOG_TOO_LONG`
 - `INVALID_BATTLE_TYPE`
 - `INVALID_BUILD_TAGS`
 - `NOTES_TOO_LONG`
+- `INVALID_MODEL_JSON`
+- `ANALYZE_FAILED`
 
-### 3) `POST /tools/convert/analyze-request`（可选）
+### `POST /tools/convert/analyze-request`
 
-把 battle report JSON 转为 `/analyze` 入参：
+把 battle report JSON 转成 `/analyze` 可直接消费的 AnalyzeRequest：
 
 ```bash
 curl -X POST http://localhost:8080/tools/convert/analyze-request \
   -H "Content-Type: application/json" \
-  --data @your-battle-report.json
+  --data @testdata/battle-report/battle-report.json
 ```
 
-## 输入输出示例（最小闭环）
-- 输入：`AnalyzeRequest`（规范化战斗输入）
-- 输出：`AnalyzeResult`（结构化分析结果）
-  - `summary`: 一句话结论
-  - `issues`: 结构化问题列表（title / description / severity / evidence）
-  - `suggestions`: 建议列表
-  - `raw_text`: 调试阶段保留的模型原始文本（可选）
+下载模式：
+
+```bash
+curl -X POST "http://localhost:8080/tools/convert/analyze-request?download=1" \
+  -H "Content-Type: application/json" \
+  --data @testdata/battle-report/battle-report.json \
+  -o battle-report.analyze_request.json
+```
+
+## 请求日志
+
+每次 `/analyze` 请求结束时，都会输出一条统一格式的请求日志，并回传响应头 `X-Request-ID`。
+
+日志至少包含：
+
+- `request_id`
+- `duration_ms`
+- `model_name`
+- `error_reason`
+
+当前日志文件默认写入：
+
+```text
+logs/server.log
+```
+
+日志示例：
+
+```text
+component=analyze_request_log event=request_completed request_id=analyze-1775551201000000000 duration_ms=842 model_name="deepseek-chat" error_reason="NONE" success=true status_code=200 method=POST path=/analyze battle_type="baseline" log_text_length=0
+```
+
+## 样例测试脚本
+
+项目提供了一个最小脚本，用来一键验证 `/analyze` 的关键样例。
+
+脚本入口：
+
+```bash
+bash scripts/test_analyze.sh
+```
+
+Makefile 入口：
+
+```bash
+make test-sample
+```
+
+默认覆盖 5 组样例：
+
+- `normal`
+- `short-log`
+- `long-log`
+- `invalid-input`
+- `timeout-sim`
+
+脚本行为：
+
+- 先检查 `/health`
+- 逐个调用 `/analyze`
+- 检查状态码和关键字
+- 输出每组 `PASS` / `FAIL`
+- 最后输出汇总
+- 有失败时返回非 0
+
+超时样例通过请求头模拟：
+
+```text
+X-Debug-Simulate-Timeout: 1
+```
+
+说明：
+
+- 脚本依赖 `bash`、`curl`、`grep`、`sed`
+- 在 Windows 上建议使用 Git Bash 或 WSL
+- 如果要故意验证失败出口，可执行：
+
+```bash
+FORCE_FAIL=1 bash scripts/test_analyze.sh
+```
 
 ## 运行与验证命令
 
@@ -220,23 +312,34 @@ go run ./cmd/server
 # 健康检查
 curl http://localhost:8080/health
 
-# 分析调用（文件输入）
+# 分析调用
 curl -X POST http://localhost:8080/analyze \
   -H "Content-Type: application/json" \
   --data @testdata/analyze_request/battle-report.analyze_request.json
+
+# 批量转换
+go run ./cmd/convertbatch -input testdata/battle-report -output-dir testdata/analyze_request
+
+# 运行 Go 测试
+go test ./...
+
+# 运行样例测试脚本
+bash scripts/test_analyze.sh
 ```
 
-如果你使用 `make`：
+使用 Makefile：
 
 ```bash
 make server
 make test
+make test-sample
 make convert INPUT=path/to/battle-report OUTPUT_DIR=path/to/out
 ```
 
 ## 已知限制
-- 当前结果质量依赖模型输出稳定性
-- 仅做了最小 JSON 容错（空白、代码块、首个 JSON 对象提取）
-- 未做复杂重试策略和 provider 抽象
-- 未做长日志分片与成本优化
-- 结构化字段仍较少，后续会继续扩展
+
+- 当前分析质量仍依赖模型输出稳定性
+- 只做了最小 JSON 容错和一次 repair 重试
+- 结果字段仍然偏轻量，后续还可以继续扩展
+- 样例测试脚本是最小验证入口，不是完整集成测试平台
+- Windows PowerShell 默认的 `curl` 是 `Invoke-WebRequest` 别名，文件上传建议使用 `curl.exe` 或 Git Bash

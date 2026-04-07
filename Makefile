@@ -1,4 +1,4 @@
-.PHONY: help server test convert
+.PHONY: help server test convert test-sample
 
 INPUT ?= testdata/battle-report
 OUTPUT_DIR ?= testdata/analyze_request
@@ -6,6 +6,7 @@ OUTPUT_DIR ?= testdata/analyze_request
 help:
 	@echo "make server                 Start the HTTP server"
 	@echo "make test                   Run go tests"
+	@echo "make test-sample            Run sample /analyze checks"
 	@echo "make convert                Batch convert battle reports"
 	@echo "make convert INPUT=... OUTPUT_DIR=..."
 
@@ -17,3 +18,6 @@ test:
 
 convert:
 	go run ./cmd/convertbatch -input $(INPUT) -output-dir $(OUTPUT_DIR)
+
+test-sample:
+	bash scripts/test_analyze.sh
