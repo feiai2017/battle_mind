@@ -116,10 +116,34 @@ curl http://localhost:8080/health
 curl -X POST http://localhost:8080/analyze \
   -H "Content-Type: application/json" \
   --data '{
-    "log_text": "00:00 cast skill_a ...",
-    "battle_type": "boss_pve",
-    "build_tags": ["dot", "single"],
-    "notes": "phase2 dps drop"
+    "metadata": {
+      "battle_type": "boss_pve",
+      "build_tags": ["dot", "single"],
+      "notes": "phase2 dps drop"
+    },
+    "summary": {
+      "win": true,
+      "duration": 78,
+      "likely_reason": "rotation efficiency is low"
+    },
+    "metrics": {
+      "damage_by_source": {
+        "dot": 120.5,
+        "direct": 80,
+        "basic_attack": 12
+      },
+      "skill_usage": {
+        "contagion_wave": 9,
+        "rupture_bloom": 5
+      }
+    },
+    "diagnosis": [
+      {
+        "code": "LOW_SURVIVAL",
+        "severity": "warn",
+        "message": "hp is too low"
+      }
+    ]
   }'
 ```
 
@@ -153,7 +177,7 @@ curl -X POST http://localhost:8080/analyze \
 {
   "error": {
     "code": "EMPTY_LOG_TEXT",
-    "message": "log_text is required"
+    "message": "log_text or structured analyze input is required"
   }
 }
 ```
@@ -196,7 +220,7 @@ curl http://localhost:8080/health
 # 分析调用（文件输入）
 curl -X POST http://localhost:8080/analyze \
   -H "Content-Type: application/json" \
-  --data @your-analyze-request.json
+  --data @testdata/analyze_request/battle-report.analyze_request.json
 ```
 
 如果你使用 `make`：

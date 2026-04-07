@@ -71,6 +71,9 @@ var allowedBattleTypes = map[string]struct{}{
 	"arena_pvp":  {},
 	"simulation": {},
 	"unknown":    {},
+	"baseline":   {},
+	"burst":      {},
+	"swarm":      {},
 }
 
 func ValidateAnalyzeRequest(req AnalyzeRequest) *AppError {
@@ -92,13 +95,34 @@ func (r *AnalyzeRequest) NormalizeAndValidate() *AppError {
 	if r.SchemaVersion == "" {
 		r.SchemaVersion = AnalyzeRequestSchemaVersionV1
 	}
-	if r.LogText == "" {
+
+	// Reuse structured metadata as top-level compatibility fields when callers
+	// send the normalized AnalyzeRequest produced by the converter.
+	r.Metadata.BattleType = strings.TrimSpace(r.Metadata.BattleType)
+	r.Metadata.BattleID = strings.TrimSpace(r.Metadata.BattleID)
+	r.Metadata.FloorID = strings.TrimSpace(r.Metadata.FloorID)
+	r.Metadata.Notes = strings.TrimSpace(r.Metadata.Notes)
+	r.Metadata.BuildTags = normalizeStringSlice(r.Metadata.BuildTags)
+	r.Metadata.NotableRules = normalizeStringSlice(r.Metadata.NotableRules)
+	r.Metadata.FloorModifiers = normalizeStringSlice(r.Metadata.FloorModifiers)
+
+	if r.BattleType == "" {
+		r.BattleType = r.Metadata.BattleType
+	}
+	if len(r.BuildTags) == 0 {
+		r.BuildTags = append([]string(nil), r.Metadata.BuildTags...)
+	}
+	if r.Notes == "" {
+		r.Notes = r.Metadata.Notes
+	}
+
+	if r.LogText == "" && !hasStructuredAnalyzeInput(*r) {
 		return &AppError{
 			Code:    ErrCodeEmptyLogText,
-			Message: "log_text is required",
+			Message: "log_text or structured analyze input is required",
 		}
 	}
-	if utf8.RuneCountInString(r.LogText) > MaxLogTextLength {
+	if r.LogText != "" && utf8.RuneCountInString(r.LogText) > MaxLogTextLength {
 		return &AppError{
 			Code:    ErrCodeLogTooLong,
 			Message: "log_text exceeds max length",
@@ -148,14 +172,6 @@ func (r *AnalyzeRequest) NormalizeAndValidate() *AppError {
 		}
 	}
 
-	// Keep legacy fields normalized for compatibility with existing tools.
-	r.Metadata.BattleType = strings.TrimSpace(r.Metadata.BattleType)
-	r.Metadata.BattleID = strings.TrimSpace(r.Metadata.BattleID)
-	r.Metadata.FloorID = strings.TrimSpace(r.Metadata.FloorID)
-	r.Metadata.Notes = strings.TrimSpace(r.Metadata.Notes)
-	r.Metadata.BuildTags = normalizeStringSlice(r.Metadata.BuildTags)
-	r.Metadata.NotableRules = normalizeStringSlice(r.Metadata.NotableRules)
-	r.Metadata.FloorModifiers = normalizeStringSlice(r.Metadata.FloorModifiers)
 	r.Summary.LikelyReason = strings.TrimSpace(r.Summary.LikelyReason)
 
 	diagnosis := make([]DiagnosisInput, 0, len(r.Diagnosis))
@@ -185,6 +201,23 @@ func (r *AnalyzeRequest) NormalizeAndValidate() *AppError {
 	}
 
 	return nil
+}
+
+func hasStructuredAnalyzeInput(r AnalyzeRequest) bool {
+	if r.Summary.Win || r.Summary.Duration > 0 || r.Summary.LikelyReason != "" {
+		return true
+	}
+	if r.Metrics.DamageBySource.DOT != 0 ||
+		r.Metrics.DamageBySource.Direct != 0 ||
+		r.Metrics.DamageBySource.BasicAttack != 0 ||
+		len(r.Metrics.DamageBySource.Other) > 0 ||
+		len(r.Metrics.SkillUsage) > 0 {
+		return true
+	}
+	if len(r.Diagnosis) > 0 {
+		return true
+	}
+	return false
 }
 
 func normalizeStringSlice(values []string) []string {

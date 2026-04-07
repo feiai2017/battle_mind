@@ -100,6 +100,11 @@ func writeAnalyzeError(w http.ResponseWriter, requestID string, err error) {
 			Code:    model.ErrCodeAnalyzeFailed,
 			Message: err.Error(),
 		})
+	case errors.Is(err, service.ErrModelJSONRepairFailed):
+		writeAppError(w, http.StatusBadGateway, model.AppError{
+			Code:    model.ErrCodeInvalidModelJSON,
+			Message: "model output is not valid JSON and could not be repaired",
+		})
 	case errors.Is(err, service.ErrInvalidLLMJSON), errors.Is(err, service.ErrInvalidAnalyzeResult):
 		writeAppError(w, http.StatusBadGateway, model.AppError{
 			Code:    model.ErrCodeAnalyzeFailed,

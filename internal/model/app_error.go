@@ -4,6 +4,7 @@ import "fmt"
 
 const (
 	ErrCodeInvalidJSON       = "INVALID_JSON"
+	ErrCodeInvalidModelJSON  = "INVALID_MODEL_JSON"
 	ErrCodeEmptyLogText      = "EMPTY_LOG_TEXT"
 	ErrCodeLogTooLong        = "LOG_TOO_LONG"
 	ErrCodeInvalidBattleType = "INVALID_BATTLE_TYPE"

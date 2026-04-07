@@ -17,6 +17,9 @@ func TestAnalyzeRequestValidation_EmptyLogText(t *testing.T) {
 	if err.Code != ErrCodeEmptyLogText {
 		t.Fatalf("unexpected error code: %s", err.Code)
 	}
+	if err.Message != "log_text or structured analyze input is required" {
+		t.Fatalf("unexpected error message: %s", err.Message)
+	}
 }
 
 func TestAnalyzeRequestValidation_WhitespaceLogText(t *testing.T) {
@@ -128,6 +131,51 @@ func TestAnalyzeRequestValidation_ValidRequest(t *testing.T) {
 		t.Fatalf("unexpected normalized build_tags: %#v", req.BuildTags)
 	}
 	if req.Notes != "keep this" {
+		t.Fatalf("unexpected normalized notes: %q", req.Notes)
+	}
+}
+
+func TestAnalyzeRequestValidation_ConvertedBattleTypesAllowed(t *testing.T) {
+	for _, battleType := range []string{"baseline", "burst", "swarm"} {
+		req := AnalyzeRequest{
+			LogText:    "battle log",
+			BattleType: battleType,
+		}
+
+		err := req.NormalizeAndValidate()
+		if err != nil {
+			t.Fatalf("battle_type %q should be allowed, got error: %v", battleType, err)
+		}
+	}
+}
+
+func TestAnalyzeRequestValidation_StructuredRequestWithoutLogText(t *testing.T) {
+	req := AnalyzeRequest{
+		Metadata: AnalyzeMetadata{
+			BattleType: "boss_pve",
+			BuildTags:  []string{" dot ", "burst"},
+			Notes:      "  converted request  ",
+		},
+		Summary: BattleSummary{
+			Duration:     78,
+			LikelyReason: "rotation efficiency is low",
+		},
+		Metrics: BattleMetrics{
+			SkillUsage: map[string]int{"contagion_wave": 9},
+		},
+	}
+
+	err := req.NormalizeAndValidate()
+	if err != nil {
+		t.Fatalf("unexpected validation error: %v", err)
+	}
+	if req.BattleType != "boss_pve" {
+		t.Fatalf("unexpected battle_type: %q", req.BattleType)
+	}
+	if len(req.BuildTags) != 2 || req.BuildTags[0] != "dot" || req.BuildTags[1] != "burst" {
+		t.Fatalf("unexpected normalized build_tags: %#v", req.BuildTags)
+	}
+	if req.Notes != "converted request" {
 		t.Fatalf("unexpected normalized notes: %q", req.Notes)
 	}
 }

@@ -13,16 +13,10 @@ import (
 )
 
 var (
-	ErrInvalidLLMJSON       = errors.New("invalid llm json output")
-	ErrInvalidAnalyzeResult = errors.New("invalid analyze result")
+	ErrInvalidLLMJSON        = errors.New("invalid llm json output")
+	ErrInvalidAnalyzeResult  = errors.New("invalid analyze result")
+	ErrModelJSONRepairFailed = errors.New("model json repair failed")
 )
-
-type analyzePromptInput struct {
-	LogText    string   `json:"log_text"`
-	BattleType string   `json:"battle_type,omitempty"`
-	BuildTags  []string `json:"build_tags,omitempty"`
-	Notes      string   `json:"notes,omitempty"`
-}
 
 type llmAnalyzeResult struct {
 	Summary     string            `json:"summary"`
@@ -38,9 +32,13 @@ type llmAnalyzeIssue struct {
 	Evidence    []string `json:"evidence"`
 }
 
-// AnalyzeService 串联 prompt 组装与模型调用。
+type textGenerator interface {
+	Generate(ctx context.Context, prompt string) (string, error)
+}
+
+// AnalyzeService handles prompt building, model invocation, JSON parsing, and one repair retry.
 type AnalyzeService struct {
-	client *llm.Client
+	client textGenerator
 }
 
 func NewAnalyzeService(client *llm.Client) *AnalyzeService {
@@ -54,6 +52,7 @@ func (s *AnalyzeService) Analyze(ctx context.Context, req model.AnalyzeRequest) 
 	if err := req.NormalizeAndValidate(); err != nil {
 		return model.AnalyzeResult{}, fmt.Errorf("validate analyze request: %w", err)
 	}
+
 	requestID := llm.RequestIDFromContext(ctx)
 	log.Printf("component=analyze_service request_id=%s event=analyze_start", requestID)
 
@@ -75,16 +74,17 @@ func (s *AnalyzeService) Analyze(ctx context.Context, req model.AnalyzeRequest) 
 		return model.AnalyzeResult{}, fmt.Errorf("generate analyze text: %w", err)
 	}
 
-	result, err := parseAnalyzeResult(text)
+	result, err := s.parseAnalyzeResultWithRepair(ctx, text)
 	if err != nil {
 		log.Printf(
-			"component=analyze_service request_id=%s event=parse_failed error=%q raw_text=%q",
+			"component=analyze_service request_id=%s event=analyze_failed error=%q raw_text=%q",
 			requestID,
 			err.Error(),
 			shrinkForLog(text, 256),
 		)
 		return model.AnalyzeResult{}, err
 	}
+
 	result.RawText = text
 	log.Printf(
 		"component=analyze_service request_id=%s event=analyze_done summary_len=%d issues=%d suggestions=%d raw_text_len=%d",
@@ -98,50 +98,119 @@ func (s *AnalyzeService) Analyze(ctx context.Context, req model.AnalyzeRequest) 
 	return result, nil
 }
 
+func (s *AnalyzeService) parseAnalyzeResultWithRepair(ctx context.Context, raw string) (model.AnalyzeResult, error) {
+	result, err := parseAnalyzeResult(raw)
+	if err == nil {
+		return result, nil
+	}
+
+	requestID := llm.RequestIDFromContext(ctx)
+	log.Printf(
+		"component=analyze_service request_id=%s event=parse_failed attempt=1 error=%q raw_text=%q",
+		requestID,
+		err.Error(),
+		shrinkForLog(raw, 256),
+	)
+
+	repairPrompt := buildRepairJSONPrompt(raw)
+	log.Printf(
+		"component=analyze_service request_id=%s event=repair_started prompt_len=%d raw_text_len=%d",
+		requestID,
+		len(repairPrompt),
+		len(strings.TrimSpace(raw)),
+	)
+
+	repairedText, repairErr := s.client.Generate(ctx, repairPrompt)
+	if repairErr != nil {
+		log.Printf(
+			"component=analyze_service request_id=%s event=repair_generate_failed error=%q",
+			requestID,
+			repairErr.Error(),
+		)
+		return model.AnalyzeResult{}, fmt.Errorf("%w: model output is not valid JSON and repair also failed", ErrModelJSONRepairFailed)
+	}
+
+	result, err = parseAnalyzeResult(repairedText)
+	if err != nil {
+		log.Printf(
+			"component=analyze_service request_id=%s event=repair_parse_failed attempt=2 error=%q repaired_text=%q",
+			requestID,
+			err.Error(),
+			shrinkForLog(repairedText, 256),
+		)
+		return model.AnalyzeResult{}, fmt.Errorf("%w: model output is not valid JSON and could not be repaired", ErrModelJSONRepairFailed)
+	}
+
+	log.Printf(
+		"component=analyze_service request_id=%s event=repair_succeeded repaired_text_len=%d",
+		requestID,
+		len(strings.TrimSpace(repairedText)),
+	)
+	return result, nil
+}
+
 func buildAnalyzePrompt(req model.AnalyzeRequest) (string, error) {
-	promptInput := buildPromptInput(req)
-	reqJSON, err := json.Marshal(promptInput)
+	reqJSON, err := json.Marshal(req)
 	if err != nil {
 		return "", err
 	}
 
 	var builder strings.Builder
-	builder.WriteString("你是一个游戏战斗日志分析助手。")
-	builder.WriteString("请阅读下面的规范化战斗输入，并只输出 JSON。")
-	builder.WriteString("不要输出解释，不要输出 markdown 代码块，不要输出额外前后缀。")
-	builder.WriteString("\n\n输出格式：")
-	builder.WriteString("\n{")
-	builder.WriteString("\n  \"summary\": \"一句话总结\",")
-	builder.WriteString("\n  \"issues\": [")
-	builder.WriteString("\n    {")
-	builder.WriteString("\n      \"title\": \"问题标题\",")
-	builder.WriteString("\n      \"description\": \"问题描述\",")
-	builder.WriteString("\n      \"severity\": \"low|medium|high\",")
-	builder.WriteString("\n      \"evidence\": [\"证据1\", \"证据2\"]")
-	builder.WriteString("\n    }")
-	builder.WriteString("\n  ],")
-	builder.WriteString("\n  \"suggestions\": [\"建议1\", \"建议2\"]")
-	builder.WriteString("\n}")
-	builder.WriteString("\n\n要求：")
-	builder.WriteString("\n1. summary 必须是字符串且不能为空。")
-	builder.WriteString("\n2. issues 必须是数组。")
-	builder.WriteString("\n3. 每个 issue 必须包含 title、description、severity、evidence。")
-	builder.WriteString("\n4. severity 只能是 low、medium、high。")
-	builder.WriteString("\n5. suggestions 必须是字符串数组。")
-	builder.WriteString("\n6. 即使信息不足也要返回合法 JSON。")
-	builder.WriteString("\n7. 不要输出 markdown 代码块。")
-	builder.WriteString("\n\n规范化战斗输入：\n")
+	builder.WriteString("You are a game battle analysis assistant.\n")
+	builder.WriteString("Read the normalized battle input and return JSON only.\n")
+	builder.WriteString("Do not output explanations, markdown, or code fences.\n\n")
+	builder.WriteString("Output schema:\n")
+	builder.WriteString("{\n")
+	builder.WriteString("  \"summary\": \"one sentence summary\",\n")
+	builder.WriteString("  \"issues\": [\n")
+	builder.WriteString("    {\n")
+	builder.WriteString("      \"title\": \"issue title\",\n")
+	builder.WriteString("      \"description\": \"issue description\",\n")
+	builder.WriteString("      \"severity\": \"low|medium|high\",\n")
+	builder.WriteString("      \"evidence\": [\"evidence 1\", \"evidence 2\"]\n")
+	builder.WriteString("    }\n")
+	builder.WriteString("  ],\n")
+	builder.WriteString("  \"suggestions\": [\"suggestion 1\", \"suggestion 2\"]\n")
+	builder.WriteString("}\n\n")
+	builder.WriteString("Requirements:\n")
+	builder.WriteString("1. summary must be a non-empty string.\n")
+	builder.WriteString("2. issues must be an array.\n")
+	builder.WriteString("3. each issue must include title, description, severity, evidence.\n")
+	builder.WriteString("4. severity must be one of low, medium, high.\n")
+	builder.WriteString("5. suggestions must be an array of strings.\n")
+	builder.WriteString("6. return valid JSON even when information is limited.\n\n")
+	builder.WriteString("Input notes:\n")
+	builder.WriteString("- log_text may be present for legacy callers.\n")
+	builder.WriteString("- metadata, summary, metrics, diagnosis are the primary normalized analysis input.\n")
+	builder.WriteString("- Use all available fields to produce the result.\n\n")
+	builder.WriteString("Normalized battle input:\n")
 	builder.Write(reqJSON)
 	return builder.String(), nil
 }
 
-func buildPromptInput(req model.AnalyzeRequest) analyzePromptInput {
-	return analyzePromptInput{
-		LogText:    req.LogText,
-		BattleType: req.BattleType,
-		BuildTags:  req.BuildTags,
-		Notes:      req.Notes,
-	}
+func buildRepairJSONPrompt(raw string) string {
+	var builder strings.Builder
+	builder.WriteString("The following model output should have been valid JSON for AnalyzeResult but it is invalid.\n")
+	builder.WriteString("Repair it into valid JSON without changing the intended meaning.\n")
+	builder.WriteString("Return JSON only.\n")
+	builder.WriteString("Do not output markdown, explanations, comments, or code fences.\n\n")
+	builder.WriteString("Required schema:\n")
+	builder.WriteString("{\n")
+	builder.WriteString("  \"summary\": \"string\",\n")
+	builder.WriteString("  \"issues\": [\n")
+	builder.WriteString("    {\n")
+	builder.WriteString("      \"title\": \"string\",\n")
+	builder.WriteString("      \"description\": \"string\",\n")
+	builder.WriteString("      \"severity\": \"low|medium|high\",\n")
+	builder.WriteString("      \"evidence\": [\"string\"]\n")
+	builder.WriteString("    }\n")
+	builder.WriteString("  ],\n")
+	builder.WriteString("  \"suggestions\": [\"string\"]\n")
+	builder.WriteString("}\n\n")
+	builder.WriteString("If the original output used legacy field \"problems\", keep the same meaning but convert it into \"issues\".\n")
+	builder.WriteString("Invalid model output:\n")
+	builder.WriteString(strings.TrimSpace(raw))
+	return builder.String()
 }
 
 func parseAnalyzeResult(raw string) (model.AnalyzeResult, error) {
@@ -199,7 +268,7 @@ func extractJSON(raw string) string {
 	}
 
 	if jsonObject := extractFirstJSONObject(trimmed); jsonObject != "" {
-		return jsonObject
+		return strings.TrimSpace(jsonObject)
 	}
 	return ""
 }
@@ -215,6 +284,7 @@ func stripCodeFence(raw string) string {
 	if strings.HasPrefix(strings.ToLower(withoutPrefix), "json") {
 		withoutPrefix = withoutPrefix[4:]
 	}
+
 	end := strings.LastIndex(withoutPrefix, "```")
 	if end == -1 {
 		return strings.TrimSpace(withoutPrefix)

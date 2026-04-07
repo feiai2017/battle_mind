@@ -1,9 +1,32 @@
 package service
 
 import (
+	"context"
 	"errors"
+	"strings"
 	"testing"
+
+	"github.com/feiai2017/battle_mind/internal/model"
 )
+
+type stubGenerator struct {
+	responses []string
+	errs      []error
+	calls     int
+}
+
+func (s *stubGenerator) Generate(_ context.Context, _ string) (string, error) {
+	index := s.calls
+	s.calls++
+
+	if index < len(s.errs) && s.errs[index] != nil {
+		return "", s.errs[index]
+	}
+	if index < len(s.responses) {
+		return s.responses[index], nil
+	}
+	return "", nil
+}
 
 func TestParseAnalyzeResult_LegacyProblemsConverted(t *testing.T) {
 	raw := `{
@@ -125,6 +148,18 @@ func TestParseAnalyzeResult_CodeFenceJSON(t *testing.T) {
 	}
 }
 
+func TestParseAnalyzeResult_LeadingAndTrailingText(t *testing.T) {
+	raw := "这里是分析结果：\n{\"summary\":\"ok\",\"issues\":[{\"title\":\"t1\",\"description\":\"d1\",\"severity\":\"low\",\"evidence\":[\"e1\"]}],\"suggestions\":[\"s1\"]}\n后面还有解释文字"
+
+	result, err := parseAnalyzeResult(raw)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if result.Summary != "ok" {
+		t.Fatalf("unexpected summary: %s", result.Summary)
+	}
+}
+
 func TestParseAnalyzeResult_InvalidJSON(t *testing.T) {
 	raw := "not a json output"
 
@@ -161,5 +196,102 @@ func TestParseAnalyzeResult_EmptySummary(t *testing.T) {
 	}
 	if !errors.Is(err, ErrInvalidAnalyzeResult) {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestBuildAnalyzePrompt_UsesStructuredAnalyzeRequest(t *testing.T) {
+	prompt, err := buildAnalyzePrompt(model.AnalyzeRequest{
+		Metadata: model.AnalyzeMetadata{
+			BattleType: "boss_pve",
+			BuildTags:  []string{"dot", "burst"},
+		},
+		Summary: model.BattleSummary{
+			Win:          true,
+			Duration:     78,
+			LikelyReason: "rotation is slow",
+		},
+		Metrics: model.BattleMetrics{
+			SkillUsage: map[string]int{"contagion_wave": 9},
+		},
+		Diagnosis: []model.DiagnosisInput{
+			{Code: "LOW_SURVIVAL", Severity: "warn", Message: "hp too low"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("build prompt failed: %v", err)
+	}
+	if !strings.Contains(prompt, `"metadata"`) {
+		t.Fatalf("prompt should contain metadata: %s", prompt)
+	}
+	if !strings.Contains(prompt, `"metrics"`) {
+		t.Fatalf("prompt should contain metrics: %s", prompt)
+	}
+	if !strings.Contains(prompt, `"diagnosis"`) {
+		t.Fatalf("prompt should contain diagnosis: %s", prompt)
+	}
+}
+
+func TestAnalyzeService_NoRepairWhenFirstParseSucceeds(t *testing.T) {
+	generator := &stubGenerator{
+		responses: []string{
+			`{"summary":"ok","issues":[{"title":"t1","description":"d1","severity":"low","evidence":["e1"]}],"suggestions":["s1"]}`,
+		},
+	}
+	service := &AnalyzeService{client: generator}
+
+	result, err := service.Analyze(context.Background(), model.AnalyzeRequest{LogText: "battle log"})
+	if err != nil {
+		t.Fatalf("analyze failed: %v", err)
+	}
+	if generator.calls != 1 {
+		t.Fatalf("expected one model call, got %d", generator.calls)
+	}
+	if result.Summary != "ok" {
+		t.Fatalf("unexpected summary: %s", result.Summary)
+	}
+}
+
+func TestAnalyzeService_RepairSuccess(t *testing.T) {
+	generator := &stubGenerator{
+		responses: []string{
+			`{"summary":"broken","issues":[{"title":"t1","description":"d1","severity":"low","evidence":["e1"]}],"suggestions":["s1"]`,
+			`{"summary":"fixed","issues":[{"title":"t1","description":"d1","severity":"low","evidence":["e1"]}],"suggestions":["s1"]}`,
+		},
+	}
+	service := &AnalyzeService{client: generator}
+
+	result, err := service.Analyze(context.Background(), model.AnalyzeRequest{LogText: "battle log"})
+	if err != nil {
+		t.Fatalf("analyze failed: %v", err)
+	}
+	if generator.calls != 2 {
+		t.Fatalf("expected two model calls, got %d", generator.calls)
+	}
+	if result.Summary != "fixed" {
+		t.Fatalf("unexpected summary: %s", result.Summary)
+	}
+	if result.RawText != generator.responses[0] {
+		t.Fatalf("raw_text should keep original model output")
+	}
+}
+
+func TestAnalyzeService_RepairFailure(t *testing.T) {
+	generator := &stubGenerator{
+		responses: []string{
+			`{"summary":"broken","issues":[`,
+			`still not json`,
+		},
+	}
+	service := &AnalyzeService{client: generator}
+
+	_, err := service.Analyze(context.Background(), model.AnalyzeRequest{LogText: "battle log"})
+	if err == nil {
+		t.Fatalf("expected analyze error")
+	}
+	if !errors.Is(err, ErrModelJSONRepairFailed) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if generator.calls != 2 {
+		t.Fatalf("repair should run exactly once, got %d calls", generator.calls)
 	}
 }
