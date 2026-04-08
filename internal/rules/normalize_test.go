@@ -18,6 +18,7 @@ func TestToRuleEvent_CastAction(t *testing.T) {
 		Type:       "SKILL_CAST",
 		SourceName: &sourceName,
 		Amount:     &amount,
+		Tags:       []string{"cast"},
 	})
 	if !ok {
 		t.Fatal("expected event to be kept")
@@ -60,6 +61,16 @@ func TestToRuleEvent_SkillHit(t *testing.T) {
 	}
 }
 
+func TestToRuleEvent_DotApply(t *testing.T) {
+	event, ok := ToRuleEvent(model.ReportEvent{Type: "DOT_APPLY"})
+	if !ok {
+		t.Fatal("expected event to be kept")
+	}
+	if event.EventType != EventTypeDotApply {
+		t.Fatalf("unexpected event type: %s", event.EventType)
+	}
+}
+
 func TestToRuleEvent_DotTick(t *testing.T) {
 	event, ok := ToRuleEvent(model.ReportEvent{Type: "DOT_TICK"})
 	if !ok {
@@ -76,6 +87,26 @@ func TestToRuleEvent_DotBurst(t *testing.T) {
 		t.Fatal("expected event to be kept")
 	}
 	if event.EventType != EventTypeDotBurst {
+		t.Fatalf("unexpected event type: %s", event.EventType)
+	}
+}
+
+func TestToRuleEvent_ResourceGain(t *testing.T) {
+	event, ok := ToRuleEvent(model.ReportEvent{Type: "RESOURCE_GAIN"})
+	if !ok {
+		t.Fatal("expected event to be kept")
+	}
+	if event.EventType != EventTypeResourceGain {
+		t.Fatalf("unexpected event type: %s", event.EventType)
+	}
+}
+
+func TestToRuleEvent_ResourceSpend(t *testing.T) {
+	event, ok := ToRuleEvent(model.ReportEvent{Type: "RESOURCE_SPEND"})
+	if !ok {
+		t.Fatal("expected event to be kept")
+	}
+	if event.EventType != EventTypeResourceSpend {
 		t.Fatalf("unexpected event type: %s", event.EventType)
 	}
 }

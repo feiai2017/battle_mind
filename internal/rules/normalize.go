@@ -7,6 +7,7 @@ import (
 )
 
 // NormalizeRuleEvents projects battle report events into the minimal rule view.
+// This is a runtime-only adapter and does not write rule events back into battle report JSON.
 // It keeps the original event order so downstream counters can rely on report order.
 func NormalizeRuleEvents(report model.BattleReport) []RuleEvent {
 	return NormalizeReportEvents(report.Events)
@@ -61,8 +62,11 @@ func normalizeEventType(event model.ReportEvent) (string, bool) {
 	case "SKILL_CAST":
 		// Raw reports emit both the cast action and the hit-side record as SKILL_CAST.
 		// Treat target-bearing records as hits so later cast counters are not duplicated.
-		if targetName != "" || hasTag(event.Tags, "hit") {
+		if hasTag(event.Tags, "hit") || targetName != "" {
 			return EventTypeSkillHit, true
+		}
+		if hasTag(event.Tags, "cast") {
+			return EventTypeCast, true
 		}
 		return EventTypeCast, true
 	case "BASIC_ATTACK":
