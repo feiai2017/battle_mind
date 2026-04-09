@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"strings"
 
 	"github.com/feiai2017/battle_mind/internal/llm"
+	"github.com/feiai2017/battle_mind/internal/logging"
 	"github.com/feiai2017/battle_mind/internal/model"
+	"github.com/feiai2017/battle_mind/internal/prompt"
+	"github.com/feiai2017/battle_mind/internal/rules"
 )
 
 var (
@@ -60,55 +62,62 @@ func (s *AnalyzeService) ModelName() string {
 	return strings.TrimSpace(namer.ModelName())
 }
 
-func (s *AnalyzeService) Analyze(ctx context.Context, req model.AnalyzeRequest) (model.AnalyzeResult, error) {
+func (s *AnalyzeService) Analyze(ctx context.Context, input model.AnalyzeInput) (model.AnalyzeResult, error) {
 	if s == nil || s.client == nil {
 		return model.AnalyzeResult{}, fmt.Errorf("analyze service is not initialized")
 	}
+
+	req := input.Request
 	if err := req.NormalizeAndValidate(); err != nil {
 		return model.AnalyzeResult{}, fmt.Errorf("validate analyze request: %w", err)
 	}
+	input.Request = req
 
 	requestID := llm.RequestIDFromContext(ctx)
-	log.Printf("component=analyze_service request_id=%s event=analyze_start", requestID)
+	logging.LogFields("analyze_service", "analyze_start", requestID, map[string]any{
+		"has_report": input.Report != nil,
+	})
 
-	prompt, err := buildAnalyzePrompt(req)
+	promptText, err := buildAnalyzePrompt(input)
 	if err != nil {
-		log.Printf("component=analyze_service request_id=%s event=prompt_build_failed error=%q", requestID, err.Error())
+		logging.LogFields("analyze_service", "prompt_build_fail", requestID, map[string]any{
+			"error": err.Error(),
+		})
 		return model.AnalyzeResult{}, fmt.Errorf("build analyze prompt: %w", err)
 	}
-	log.Printf(
-		"component=analyze_service request_id=%s event=prompt_built prompt_len=%d build_tags_count=%d",
-		requestID,
-		len(prompt),
-		len(req.BuildTags),
-	)
+	logging.LogFields("analyze_service", "prompt_built", requestID, map[string]any{
+		"build_tags_count": len(req.BuildTags),
+		"has_report":       input.Report != nil,
+		"prompt_len":       len(promptText),
+	})
+	logging.LogTextBlock("analyze_service", "llm_prompt", requestID, promptText)
 
-	text, err := s.client.Generate(ctx, prompt)
+	text, err := s.client.Generate(ctx, promptText)
 	if err != nil {
-		log.Printf("component=analyze_service request_id=%s event=generate_failed error=%q", requestID, err.Error())
+		logging.LogFields("analyze_service", "generate_fail", requestID, map[string]any{
+			"error": err.Error(),
+		})
 		return model.AnalyzeResult{}, fmt.Errorf("generate analyze text: %w", err)
 	}
+	logging.LogTextBlock("analyze_service", "llm_raw_response", requestID, text)
 
 	result, err := s.parseAnalyzeResultWithRepair(ctx, text)
 	if err != nil {
-		log.Printf(
-			"component=analyze_service request_id=%s event=analyze_failed error=%q raw_text=%q",
-			requestID,
-			err.Error(),
-			shrinkForLog(text, 256),
-		)
+		logging.LogFields("analyze_service", "analyze_fail", requestID, map[string]any{
+			"error":        err.Error(),
+			"raw_text_len": len(text),
+		})
 		return model.AnalyzeResult{}, err
 	}
 
 	result.RawText = text
-	log.Printf(
-		"component=analyze_service request_id=%s event=analyze_done summary_len=%d issues=%d suggestions=%d raw_text_len=%d",
-		requestID,
-		len(result.Summary),
-		len(result.Issues),
-		len(result.Suggestions),
-		len(text),
-	)
+	logging.LogFields("analyze_service", "analyze_done", requestID, map[string]any{
+		"issues":       len(result.Issues),
+		"raw_text_len": len(text),
+		"summary_len":  len(result.Summary),
+		"suggestions":  len(result.Suggestions),
+	})
+	logging.LogJSONBlock("analyze_service", "normalized_result", requestID, result)
 
 	return result, nil
 }
@@ -120,110 +129,79 @@ func (s *AnalyzeService) parseAnalyzeResultWithRepair(ctx context.Context, raw s
 	}
 
 	requestID := llm.RequestIDFromContext(ctx)
-	log.Printf(
-		"component=analyze_service request_id=%s event=parse_failed attempt=1 error=%q raw_text=%q",
-		requestID,
-		err.Error(),
-		shrinkForLog(raw, 256),
-	)
+	logging.LogFields("analyze_service", "parse_fail", requestID, map[string]any{
+		"attempt":      1,
+		"error":        err.Error(),
+		"raw_text_len": len(strings.TrimSpace(raw)),
+	})
 
 	repairPrompt := buildRepairJSONPrompt(raw)
-	log.Printf(
-		"component=analyze_service request_id=%s event=repair_started prompt_len=%d raw_text_len=%d",
-		requestID,
-		len(repairPrompt),
-		len(strings.TrimSpace(raw)),
-	)
+	logging.LogFields("analyze_service", "repair_start", requestID, map[string]any{
+		"prompt_len":   len(repairPrompt),
+		"raw_text_len": len(strings.TrimSpace(raw)),
+	})
+	logging.LogTextBlock("analyze_service", "llm_repair_prompt", requestID, repairPrompt)
 
 	repairedText, repairErr := s.client.Generate(ctx, repairPrompt)
 	if repairErr != nil {
-		log.Printf(
-			"component=analyze_service request_id=%s event=repair_generate_failed error=%q",
-			requestID,
-			repairErr.Error(),
-		)
+		logging.LogFields("analyze_service", "repair_generate_fail", requestID, map[string]any{
+			"error": repairErr.Error(),
+		})
 		return model.AnalyzeResult{}, fmt.Errorf("%w: model output is not valid JSON and repair also failed", ErrModelJSONRepairFailed)
 	}
+	logging.LogTextBlock("analyze_service", "llm_repair_response", requestID, repairedText)
 
 	result, err = parseAnalyzeResult(repairedText)
 	if err != nil {
-		log.Printf(
-			"component=analyze_service request_id=%s event=repair_parse_failed attempt=2 error=%q repaired_text=%q",
-			requestID,
-			err.Error(),
-			shrinkForLog(repairedText, 256),
-		)
+		logging.LogFields("analyze_service", "repair_parse_fail", requestID, map[string]any{
+			"attempt":           2,
+			"error":             err.Error(),
+			"repaired_text_len": len(strings.TrimSpace(repairedText)),
+		})
 		return model.AnalyzeResult{}, fmt.Errorf("%w: model output is not valid JSON and could not be repaired", ErrModelJSONRepairFailed)
 	}
 
-	log.Printf(
-		"component=analyze_service request_id=%s event=repair_succeeded repaired_text_len=%d",
-		requestID,
-		len(strings.TrimSpace(repairedText)),
-	)
+	logging.LogFields("analyze_service", "repair_done", requestID, map[string]any{
+		"repaired_text_len": len(strings.TrimSpace(repairedText)),
+	})
 	return result, nil
 }
 
-func buildAnalyzePrompt(req model.AnalyzeRequest) (string, error) {
-	reqJSON, err := json.Marshal(req)
-	if err != nil {
-		return "", err
+func buildAnalyzePrompt(input model.AnalyzeInput) (string, error) {
+	ruleSummary := rules.BuildRuleSummary(nil)
+	if input.Report != nil {
+		ruleSummary = rules.BuildRuleSummary(rules.NormalizeRuleEvents(*input.Report))
 	}
 
-	var builder strings.Builder
-	builder.WriteString("You are a game battle analysis assistant.\n")
-	builder.WriteString("Read the normalized battle input and return JSON only.\n")
-	builder.WriteString("Do not output explanations, markdown, or code fences.\n\n")
-	builder.WriteString("Output schema:\n")
-	builder.WriteString("{\n")
-	builder.WriteString("  \"summary\": \"one sentence summary\",\n")
-	builder.WriteString("  \"issues\": [\n")
-	builder.WriteString("    {\n")
-	builder.WriteString("      \"title\": \"issue title\",\n")
-	builder.WriteString("      \"description\": \"issue description\",\n")
-	builder.WriteString("      \"severity\": \"low|medium|high\",\n")
-	builder.WriteString("      \"evidence\": [\"evidence 1\", \"evidence 2\"]\n")
-	builder.WriteString("    }\n")
-	builder.WriteString("  ],\n")
-	builder.WriteString("  \"suggestions\": [\"suggestion 1\", \"suggestion 2\"]\n")
-	builder.WriteString("}\n\n")
-	builder.WriteString("Requirements:\n")
-	builder.WriteString("1. summary must be a non-empty string.\n")
-	builder.WriteString("2. issues must be an array.\n")
-	builder.WriteString("3. each issue must include title, description, severity, evidence.\n")
-	builder.WriteString("4. severity must be one of low, medium, high.\n")
-	builder.WriteString("5. suggestions must be an array of strings.\n")
-	builder.WriteString("6. return valid JSON even when information is limited.\n\n")
-	builder.WriteString("Input notes:\n")
-	builder.WriteString("- log_text may be present for legacy callers.\n")
-	builder.WriteString("- metadata, summary, metrics, diagnosis are the primary normalized analysis input.\n")
-	builder.WriteString("- Use all available fields to produce the result.\n\n")
-	builder.WriteString("Normalized battle input:\n")
-	builder.Write(reqJSON)
-	return builder.String(), nil
+	return prompt.BuildAnalyzePrompt(prompt.AnalyzePromptInput{
+		Request:     input.Request,
+		Report:      input.Report,
+		RuleSummary: ruleSummary,
+	}), nil
 }
 
 func buildRepairJSONPrompt(raw string) string {
 	var builder strings.Builder
-	builder.WriteString("The following model output should have been valid JSON for AnalyzeResult but it is invalid.\n")
-	builder.WriteString("Repair it into valid JSON without changing the intended meaning.\n")
-	builder.WriteString("Return JSON only.\n")
-	builder.WriteString("Do not output markdown, explanations, comments, or code fences.\n\n")
-	builder.WriteString("Required schema:\n")
+	builder.WriteString("下面这段模型输出本应是 AnalyzeResult 的合法 JSON，但当前格式非法。\n")
+	builder.WriteString("请在不改变原始语义的前提下修复为合法 JSON。\n")
+	builder.WriteString("只输出 JSON。\n")
+	builder.WriteString("不要输出 markdown、解释、注释或代码块。\n\n")
+	builder.WriteString("目标格式：\n")
 	builder.WriteString("{\n")
-	builder.WriteString("  \"summary\": \"string\",\n")
+	builder.WriteString("  \"summary\": \"字符串\",\n")
 	builder.WriteString("  \"issues\": [\n")
 	builder.WriteString("    {\n")
-	builder.WriteString("      \"title\": \"string\",\n")
-	builder.WriteString("      \"description\": \"string\",\n")
+	builder.WriteString("      \"title\": \"字符串\",\n")
+	builder.WriteString("      \"description\": \"字符串\",\n")
 	builder.WriteString("      \"severity\": \"low|medium|high\",\n")
-	builder.WriteString("      \"evidence\": [\"string\"]\n")
+	builder.WriteString("      \"evidence\": [\"字符串\"]\n")
 	builder.WriteString("    }\n")
 	builder.WriteString("  ],\n")
-	builder.WriteString("  \"suggestions\": [\"string\"]\n")
+	builder.WriteString("  \"suggestions\": [\"字符串\"]\n")
 	builder.WriteString("}\n\n")
-	builder.WriteString("If the original output used legacy field \"problems\", keep the same meaning but convert it into \"issues\".\n")
-	builder.WriteString("Invalid model output:\n")
+	builder.WriteString("如果原始输出使用了旧字段 \"problems\"，请保持语义不变并转换成 \"issues\"。\n")
+	builder.WriteString("所有自然语言字段必须使用简体中文。\n")
+	builder.WriteString("待修复的模型输出：\n")
 	builder.WriteString(strings.TrimSpace(raw))
 	return builder.String()
 }
@@ -464,8 +442,7 @@ func deriveIssueTitle(problem string) string {
 		return ""
 	}
 
-	cutSet := "，。,；;：:"
-	for _, separator := range cutSet {
+	for _, separator := range []rune{'，', '。', '；', '：'} {
 		if index := strings.IndexRune(problem, separator); index > 0 {
 			return strings.TrimSpace(problem[:index])
 		}
@@ -526,12 +503,4 @@ func containsAny(text string, keywords ...string) bool {
 		}
 	}
 	return false
-}
-
-func shrinkForLog(text string, max int) string {
-	text = strings.TrimSpace(text)
-	if max <= 0 || len(text) <= max {
-		return text
-	}
-	return text[:max] + "...(truncated)"
 }

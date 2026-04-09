@@ -6,13 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/feiai2017/battle_mind/internal/config"
+	"github.com/feiai2017/battle_mind/internal/logging"
 )
 
 var (
@@ -106,19 +106,21 @@ func (c *Client) Generate(ctx context.Context, prompt string) (string, error) {
 	requestID := RequestIDFromContext(ctx)
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
-		log.Printf("component=llm_client request_id=%s event=reject reason=empty_prompt", requestID)
+		logging.LogFields("llm_client", "reject", requestID, map[string]any{
+			"reason": "empty_prompt",
+		})
 		return "", ErrEmptyPrompt
 	}
 	if SimulationModeFromContext(ctx) == "timeout" {
-		log.Printf("component=llm_client request_id=%s event=simulate_timeout model=%s", requestID, c.model)
+		logging.LogFields("llm_client", "simulate_timeout", requestID, map[string]any{
+			"model": c.model,
+		})
 		return "", simulatedTimeoutError{}
 	}
-	log.Printf(
-		"component=llm_client request_id=%s event=generate_start model=%s prompt_len=%d",
-		requestID,
-		c.model,
-		len(prompt),
-	)
+	logging.LogFields("llm_client", "call_start", requestID, map[string]any{
+		"model":      c.model,
+		"prompt_len": len(prompt),
+	})
 	startedAt := time.Now()
 
 	reqBody := chatCompletionsRequest{
@@ -152,12 +154,10 @@ func (c *Client) Generate(ctx context.Context, prompt string) (string, error) {
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		log.Printf(
-			"component=llm_client request_id=%s event=request_failed duration_ms=%d error=%q",
-			requestID,
-			time.Since(startedAt).Milliseconds(),
-			err.Error(),
-		)
+		logging.LogFields("llm_client", "call_fail", requestID, map[string]any{
+			"duration_ms": time.Since(startedAt).Milliseconds(),
+			"error":       err.Error(),
+		})
 		return "", fmt.Errorf("request model api: %w", err)
 	}
 	defer resp.Body.Close()
@@ -167,23 +167,19 @@ func (c *Client) Generate(ctx context.Context, prompt string) (string, error) {
 		return "", fmt.Errorf("read model response: %w", err)
 	}
 	if len(bytes.TrimSpace(respBody)) == 0 {
-		log.Printf(
-			"component=llm_client request_id=%s event=empty_response status=%d duration_ms=%d",
-			requestID,
-			resp.StatusCode,
-			time.Since(startedAt).Milliseconds(),
-		)
+		logging.LogFields("llm_client", "empty_response", requestID, map[string]any{
+			"duration_ms": time.Since(startedAt).Milliseconds(),
+			"status":      resp.StatusCode,
+		})
 		return "", ErrEmptyResponse
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		log.Printf(
-			"component=llm_client request_id=%s event=bad_status status=%d duration_ms=%d body=%q",
-			requestID,
-			resp.StatusCode,
-			time.Since(startedAt).Milliseconds(),
-			shrinkBody(string(respBody), 256),
-		)
+		logging.LogFields("llm_client", "bad_status", requestID, map[string]any{
+			"body":        shrinkBody(string(respBody), 256),
+			"duration_ms": time.Since(startedAt).Milliseconds(),
+			"status":      resp.StatusCode,
+		})
 		return "", &HTTPStatusError{
 			StatusCode: resp.StatusCode,
 			Body:       shrinkBody(string(respBody), 512),
@@ -196,31 +192,25 @@ func (c *Client) Generate(ctx context.Context, prompt string) (string, error) {
 	}
 
 	if len(parsed.Choices) == 0 {
-		log.Printf(
-			"component=llm_client request_id=%s event=text_missing duration_ms=%d",
-			requestID,
-			time.Since(startedAt).Milliseconds(),
-		)
+		logging.LogFields("llm_client", "text_missing", requestID, map[string]any{
+			"duration_ms": time.Since(startedAt).Milliseconds(),
+		})
 		return "", ErrTextNotFound
 	}
 
 	text := strings.TrimSpace(parsed.Choices[0].Message.Content)
 	if text == "" {
-		log.Printf(
-			"component=llm_client request_id=%s event=text_empty duration_ms=%d",
-			requestID,
-			time.Since(startedAt).Milliseconds(),
-		)
+		logging.LogFields("llm_client", "text_empty", requestID, map[string]any{
+			"duration_ms": time.Since(startedAt).Milliseconds(),
+		})
 		return "", ErrTextNotFound
 	}
 
-	log.Printf(
-		"component=llm_client request_id=%s event=generate_done status=%d duration_ms=%d text_len=%d",
-		requestID,
-		resp.StatusCode,
-		time.Since(startedAt).Milliseconds(),
-		len(text),
-	)
+	logging.LogFields("llm_client", "call_done", requestID, map[string]any{
+		"duration_ms": time.Since(startedAt).Milliseconds(),
+		"status":      resp.StatusCode,
+		"text_len":    len(text),
+	})
 
 	return text, nil
 }

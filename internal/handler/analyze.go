@@ -5,13 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"io"
 	"net"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/feiai2017/battle_mind/internal/llm"
+	"github.com/feiai2017/battle_mind/internal/logging"
 	"github.com/feiai2017/battle_mind/internal/model"
 	"github.com/feiai2017/battle_mind/internal/service"
 )
@@ -50,6 +51,7 @@ func (h *Handler) Analyze(w http.ResponseWriter, r *http.Request) {
 	battleType := ""
 	logTextLength := 0
 	modelName := h.modelName()
+	payloadKind := ""
 
 	w.Header().Set(requestIDHeader, requestID)
 	defer func() {
@@ -74,80 +76,170 @@ func (h *Handler) Analyze(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf(
-		"component=analyze_handler request_id=%s event=request_started method=%s path=%s remote_addr=%s",
-		requestID,
-		r.Method,
-		r.URL.Path,
-		r.RemoteAddr,
-	)
+	logging.LogFields("analyze_handler", "request_start", requestID, map[string]any{
+		"method":      r.Method,
+		"path":        r.URL.Path,
+		"remote_addr": r.RemoteAddr,
+	})
 
 	if h.analyzeService == nil {
-		log.Printf("component=analyze_handler request_id=%s event=service_missing", requestID)
 		statusCode = http.StatusInternalServerError
 		errorReason = model.ErrCodeInternalError
-		writeAppError(w, statusCode, model.AppError{
+		appErr := model.AppError{
 			Code:    model.ErrCodeInternalError,
 			Message: "analyze service is not configured",
+		}
+		logging.LogFields("analyze_handler", "request_fail", requestID, map[string]any{
+			"code":    appErr.Code,
+			"message": appErr.Message,
+			"reason":  "service_missing",
 		})
+		writeLoggedAppError(w, statusCode, appErr, requestID)
 		return
 	}
 
-	var req model.AnalyzeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Printf("component=analyze_handler request_id=%s event=decode_failed error=%q", requestID, err.Error())
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
 		statusCode = http.StatusBadRequest
 		errorReason = model.ErrCodeInvalidJSON
-		writeAppError(w, statusCode, model.AppError{
+		appErr := model.AppError{
 			Code:    model.ErrCodeInvalidJSON,
 			Message: "invalid analyze request json",
+		}
+		logging.LogFields("analyze_handler", "request_fail", requestID, map[string]any{
+			"code":    appErr.Code,
+			"message": appErr.Message,
+			"reason":  "read_body_failed",
+			"error":   err.Error(),
 		})
-		return
-	}
-	if appErr := req.NormalizeAndValidate(); appErr != nil {
-		log.Printf("component=analyze_handler request_id=%s event=validate_failed code=%s error=%q", requestID, appErr.Code, appErr.Message)
-		statusCode = http.StatusBadRequest
-		errorReason = appErr.Code
-		battleType = req.BattleType
-		logTextLength = len(req.LogText)
-		writeAppError(w, statusCode, *appErr)
+		writeLoggedAppError(w, statusCode, appErr, requestID)
 		return
 	}
 
-	battleType = req.BattleType
-	logTextLength = len(req.LogText)
-	log.Printf(
-		"component=analyze_handler request_id=%s event=request_decoded battle_type=%s build_tags_count=%d",
-		requestID,
-		req.BattleType,
-		len(req.BuildTags),
-	)
+	input, payloadKind, err := decodeAnalyzeInput(body)
+	if err != nil {
+		statusCode = http.StatusBadRequest
+		errorReason = model.ErrCodeInvalidJSON
+		appErr := model.AppError{
+			Code:    model.ErrCodeInvalidJSON,
+			Message: "invalid analyze request json",
+		}
+		logging.LogFields("analyze_handler", "request_fail", requestID, map[string]any{
+			"code":    appErr.Code,
+			"message": appErr.Message,
+			"reason":  "decode_failed",
+			"error":   err.Error(),
+		})
+		writeLoggedAppError(w, statusCode, appErr, requestID)
+		return
+	}
+	if appErr := input.Request.NormalizeAndValidate(); appErr != nil {
+		statusCode = http.StatusBadRequest
+		errorReason = appErr.Code
+		battleType = input.Request.BattleType
+		logTextLength = len(input.Request.LogText)
+		logging.LogFields("analyze_handler", "request_fail", requestID, map[string]any{
+			"code":        appErr.Code,
+			"message":     appErr.Message,
+			"battle_type": battleType,
+			"reason":      "validate_failed",
+		})
+		writeLoggedAppError(w, statusCode, *appErr, requestID)
+		return
+	}
+
+	battleType = input.Request.BattleType
+	logTextLength = len(input.Request.LogText)
+	logging.LogFields("analyze_handler", "request_decoded", requestID, map[string]any{
+		"payload_kind":     payloadKind,
+		"battle_type":      input.Request.BattleType,
+		"build_tags_count": len(input.Request.BuildTags),
+		"log_text_length":  len(input.Request.LogText),
+		"has_report":       input.Report != nil,
+	})
 
 	ctx := llm.WithRequestID(r.Context(), requestID)
 	if strings.TrimSpace(r.Header.Get(simulateTimeoutHeader)) == "1" {
 		ctx = llm.WithSimulationMode(ctx, "timeout")
 	}
-	result, err := h.analyzeService.Analyze(ctx, req)
+	result, err := h.analyzeService.Analyze(ctx, input)
 	if err != nil {
 		statusCode, appErr, errorReasonValue := mapAnalyzeError(err)
 		errorReason = errorReasonValue
-		log.Printf("component=analyze_handler request_id=%s event=request_failed error=%q", requestID, err.Error())
-		writeAppError(w, statusCode, appErr)
+		logging.LogFields("analyze_handler", "request_fail", requestID, map[string]any{
+			"status_code": statusCode,
+			"error_code":  appErr.Code,
+			"message":     appErr.Message,
+			"reason":      errorReason,
+			"error":       err.Error(),
+		})
+		writeLoggedAppError(w, statusCode, appErr, requestID)
 		return
 	}
 
 	success = true
-	log.Printf(
-		"component=analyze_handler request_id=%s event=request_succeeded duration_ms=%d raw_text_len=%d",
-		requestID,
-		time.Since(startedAt).Milliseconds(),
-		len(result.RawText),
-	)
+	logging.LogFields("analyze_handler", "request_success", requestID, map[string]any{
+		"duration_ms":  time.Since(startedAt).Milliseconds(),
+		"raw_text_len": len(result.RawText),
+		"status_code":  statusCode,
+	})
 
-	writeJSON(w, statusCode, map[string]any{
+	responsePayload := map[string]any{
 		"ok":   true,
 		"data": result,
-	})
+	}
+	logging.LogJSONBlock("analyze_handler", "http_response_ok", requestID, responsePayload)
+	writeJSON(w, statusCode, responsePayload)
+}
+
+func decodeAnalyzeInput(body []byte) (model.AnalyzeInput, string, error) {
+	trimmed := strings.TrimSpace(string(body))
+	if trimmed == "" {
+		return model.AnalyzeInput{}, "", io.EOF
+	}
+
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return model.AnalyzeInput{}, "", err
+	}
+
+	if looksLikeBattleReport(envelope) {
+		var report model.BattleReport
+		if err := json.Unmarshal(body, &report); err != nil {
+			return model.AnalyzeInput{}, "", err
+		}
+		return model.AnalyzeInput{
+			Request: service.ConvertBattleReportToAnalyzeRequest(report),
+			Report:  &report,
+		}, "battle_report", nil
+	}
+
+	var req model.AnalyzeRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		return model.AnalyzeInput{}, "", err
+	}
+	return model.AnalyzeInput{Request: req}, "analyze_request", nil
+}
+
+func looksLikeBattleReport(envelope map[string]json.RawMessage) bool {
+	if len(envelope) == 0 {
+		return false
+	}
+	battleReportKeys := []string{
+		"events",
+		"snapshots",
+		"resultSummary",
+		"aggregateMetrics",
+		"floorContext",
+		"buildContext",
+		"reportVersion",
+	}
+	for _, key := range battleReportKeys {
+		if _, ok := envelope[key]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func mapAnalyzeError(err error) (int, model.AppError, string) {
@@ -221,19 +313,17 @@ func logAnalyzeRequest(entry analyzeRequestLog) {
 		errorReason = logErrorReasonNone
 	}
 
-	log.Printf(
-		`component=analyze_request_log event=request_completed request_id=%s duration_ms=%d model_name=%q error_reason=%q success=%t status_code=%d method=%s path=%s battle_type=%q log_text_length=%d`,
-		entry.RequestID,
-		entry.DurationMS,
-		modelName,
-		errorReason,
-		entry.Success,
-		entry.StatusCode,
-		entry.Method,
-		entry.Path,
-		entry.BattleType,
-		entry.LogTextLength,
-	)
+	logging.LogFields("analyze_request", "request_completed", entry.RequestID, map[string]any{
+		"battle_type":     entry.BattleType,
+		"duration_ms":     entry.DurationMS,
+		"error_reason":    errorReason,
+		"log_text_length": entry.LogTextLength,
+		"method":          entry.Method,
+		"model_name":      modelName,
+		"path":            entry.Path,
+		"status_code":     entry.StatusCode,
+		"success":         entry.Success,
+	})
 }
 
 func (h *Handler) modelName() string {
@@ -245,4 +335,10 @@ func (h *Handler) modelName() string {
 		return "unknown"
 	}
 	return modelName
+}
+
+func writeLoggedAppError(w http.ResponseWriter, status int, appErr model.AppError, requestID string) {
+	payload := ErrorResponse{Error: appErr}
+	logging.LogJSONBlock("analyze_handler", "http_response_error", requestID, payload)
+	writeJSON(w, status, payload)
 }

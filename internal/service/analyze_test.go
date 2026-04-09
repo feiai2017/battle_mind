@@ -200,34 +200,46 @@ func TestParseAnalyzeResult_EmptySummary(t *testing.T) {
 }
 
 func TestBuildAnalyzePrompt_UsesStructuredAnalyzeRequest(t *testing.T) {
-	prompt, err := buildAnalyzePrompt(model.AnalyzeRequest{
-		Metadata: model.AnalyzeMetadata{
-			BattleType: "boss_pve",
-			BuildTags:  []string{"dot", "burst"},
+	prompt, err := buildAnalyzePrompt(model.AnalyzeInput{
+		Request: model.AnalyzeRequest{
+			Metadata: model.AnalyzeMetadata{
+				BattleType: "boss_pve",
+				BuildTags:  []string{"dot", "burst"},
+			},
+			Summary: model.BattleSummary{
+				Win:          true,
+				Duration:     78,
+				LikelyReason: "rotation is slow",
+			},
+			Metrics: model.BattleMetrics{
+				SkillUsage: map[string]int{"contagion_wave": 9},
+			},
+			Diagnosis: []model.DiagnosisInput{
+				{Code: "LOW_SURVIVAL", Severity: "warn", Message: "hp too low"},
+			},
 		},
-		Summary: model.BattleSummary{
-			Win:          true,
-			Duration:     78,
-			LikelyReason: "rotation is slow",
-		},
-		Metrics: model.BattleMetrics{
-			SkillUsage: map[string]int{"contagion_wave": 9},
-		},
-		Diagnosis: []model.DiagnosisInput{
-			{Code: "LOW_SURVIVAL", Severity: "warn", Message: "hp too low"},
+		Report: &model.BattleReport{
+			ResultSummary: model.ResultSummary{
+				Win:          true,
+				Duration:     78.3,
+				LikelyReason: "rotation is slow",
+			},
+			AggregateMetrics: model.AggregateMetrics{
+				SkillUsage: []model.SkillUsage{{SkillID: "contagion_wave", Casts: 9}},
+			},
 		},
 	})
 	if err != nil {
 		t.Fatalf("build prompt failed: %v", err)
 	}
-	if !strings.Contains(prompt, `"metadata"`) {
-		t.Fatalf("prompt should contain metadata: %s", prompt)
+	if !strings.Contains(prompt, "[Rule Metrics]") {
+		t.Fatalf("prompt should contain rule metrics: %s", prompt)
 	}
-	if !strings.Contains(prompt, `"metrics"`) {
-		t.Fatalf("prompt should contain metrics: %s", prompt)
+	if !strings.Contains(prompt, "[Battle Report Context]") {
+		t.Fatalf("prompt should contain report context: %s", prompt)
 	}
-	if !strings.Contains(prompt, `"diagnosis"`) {
-		t.Fatalf("prompt should contain diagnosis: %s", prompt)
+	if strings.Contains(prompt, "\"events\"") {
+		t.Fatalf("prompt should not dump raw events: %s", prompt)
 	}
 }
 
@@ -239,7 +251,7 @@ func TestAnalyzeService_NoRepairWhenFirstParseSucceeds(t *testing.T) {
 	}
 	service := &AnalyzeService{client: generator}
 
-	result, err := service.Analyze(context.Background(), model.AnalyzeRequest{LogText: "battle log"})
+	result, err := service.Analyze(context.Background(), model.AnalyzeInput{Request: model.AnalyzeRequest{LogText: "battle log"}})
 	if err != nil {
 		t.Fatalf("analyze failed: %v", err)
 	}
@@ -260,7 +272,7 @@ func TestAnalyzeService_RepairSuccess(t *testing.T) {
 	}
 	service := &AnalyzeService{client: generator}
 
-	result, err := service.Analyze(context.Background(), model.AnalyzeRequest{LogText: "battle log"})
+	result, err := service.Analyze(context.Background(), model.AnalyzeInput{Request: model.AnalyzeRequest{LogText: "battle log"}})
 	if err != nil {
 		t.Fatalf("analyze failed: %v", err)
 	}
@@ -284,7 +296,7 @@ func TestAnalyzeService_RepairFailure(t *testing.T) {
 	}
 	service := &AnalyzeService{client: generator}
 
-	_, err := service.Analyze(context.Background(), model.AnalyzeRequest{LogText: "battle log"})
+	_, err := service.Analyze(context.Background(), model.AnalyzeInput{Request: model.AnalyzeRequest{LogText: "battle log"}})
 	if err == nil {
 		t.Fatalf("expected analyze error")
 	}

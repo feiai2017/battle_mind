@@ -24,6 +24,7 @@ func SetupFileLogging(filePath string) (io.Closer, error) {
 		return nil, err
 	}
 
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 	log.SetOutput(io.MultiWriter(os.Stdout, file))
 	return file, nil
 }

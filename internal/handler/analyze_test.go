@@ -21,13 +21,13 @@ type stubAnalyzeService struct {
 	called    int
 	result    model.AnalyzeResult
 	err       error
-	last      model.AnalyzeRequest
+	last      model.AnalyzeInput
 	modelName string
 }
 
-func (s *stubAnalyzeService) Analyze(_ context.Context, req model.AnalyzeRequest) (model.AnalyzeResult, error) {
+func (s *stubAnalyzeService) Analyze(_ context.Context, input model.AnalyzeInput) (model.AnalyzeResult, error) {
 	s.called++
-	s.last = req
+	s.last = input
 	return s.result, s.err
 }
 
@@ -126,8 +126,8 @@ func TestAnalyze_ValidRequestCallsService(t *testing.T) {
 	if svc.called != 1 {
 		t.Fatalf("service should be called once, got %d", svc.called)
 	}
-	if svc.last.LogText != "test log" {
-		t.Fatalf("expected log_text to be normalized, got %q", svc.last.LogText)
+	if svc.last.Request.LogText != "test log" {
+		t.Fatalf("expected log_text to be normalized, got %q", svc.last.Request.LogText)
 	}
 }
 
@@ -176,11 +176,95 @@ func TestAnalyze_StructuredRequestWithoutLogTextCallsService(t *testing.T) {
 	if svc.called != 1 {
 		t.Fatalf("service should be called once, got %d", svc.called)
 	}
-	if svc.last.BattleType != "boss_pve" {
-		t.Fatalf("expected battle_type to be lifted from metadata, got %q", svc.last.BattleType)
+	if svc.last.Request.BattleType != "boss_pve" {
+		t.Fatalf("expected battle_type to be lifted from metadata, got %q", svc.last.Request.BattleType)
 	}
-	if len(svc.last.BuildTags) != 2 || svc.last.BuildTags[0] != "dot" {
-		t.Fatalf("unexpected build_tags: %#v", svc.last.BuildTags)
+	if len(svc.last.Request.BuildTags) != 2 || svc.last.Request.BuildTags[0] != "dot" {
+		t.Fatalf("unexpected build_tags: %#v", svc.last.Request.BuildTags)
+	}
+}
+
+func TestAnalyze_BattleReportRequestCallsService(t *testing.T) {
+	svc := &stubAnalyzeService{
+		result: model.AnalyzeResult{
+			Summary: "ok",
+		},
+	}
+	h := New(svc)
+	req := httptest.NewRequest(http.MethodPost, "/analyze", strings.NewReader(`{
+		"floorId":"floor-883",
+		"floorContext":{
+			"pressureType":"baseline",
+			"notableRules":["single target"],
+			"floorModifiers":["stable opener"]
+		},
+		"buildContext":{
+			"archetype":"dot",
+			"selectedSkills":[
+				{"tags":["single","dot","starter"]},
+				{"tags":["burst"]}
+			]
+		},
+		"resultSummary":{
+			"win":true,
+			"duration":78.3,
+			"likelyReason":"rotation is slow"
+		},
+		"aggregateMetrics":{
+			"damageBySource":[
+				{"category":"dot","sourceId":"toxic_lance","damage":120.5},
+				{"category":"direct","sourceId":"rupture_bloom","damage":80},
+				{"category":"direct","sourceId":"basic_attack","damage":12}
+			],
+			"skillUsage":[
+				{"skillId":"contagion_wave","casts":9}
+			]
+		},
+		"diagnosis":[
+			{
+				"code":"LOW_SURVIVAL",
+				"severity":"warn",
+				"message":"hp too low",
+				"details":{"hpRatio":0.15}
+			}
+		],
+		"events":[
+			{
+				"time":1,
+				"type":"SKILL_CAST",
+				"sourceName":"毒蚀穿刺",
+				"amount":14,
+				"tags":["cast"]
+			}
+		]
+	}`))
+	rec := httptest.NewRecorder()
+
+	h.Analyze(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d", rec.Code)
+	}
+	if svc.called != 1 {
+		t.Fatalf("service should be called once, got %d", svc.called)
+	}
+	if svc.last.Request.BattleType != "baseline" {
+		t.Fatalf("expected battle_type from battle report, got %q", svc.last.Request.BattleType)
+	}
+	if svc.last.Request.Summary.Duration != 78 {
+		t.Fatalf("expected rounded duration from battle report, got %d", svc.last.Request.Summary.Duration)
+	}
+	if svc.last.Request.LogText == "" {
+		t.Fatal("expected converted log_text for compatibility")
+	}
+	if svc.last.Request.Metrics.SkillUsage["contagion_wave"] != 9 {
+		t.Fatalf("unexpected skill usage: %#v", svc.last.Request.Metrics.SkillUsage)
+	}
+	if svc.last.Report == nil {
+		t.Fatal("expected original battle report to be forwarded")
+	}
+	if len(svc.last.Report.Events) != 1 {
+		t.Fatalf("unexpected forwarded report events: %d", len(svc.last.Report.Events))
 	}
 }
 
@@ -232,19 +316,16 @@ func TestAnalyze_SuccessLogsRequestSummaryAndHeader(t *testing.T) {
 	}
 
 	logText := logBuffer.String()
-	if !strings.Contains(logText, "component=analyze_request_log event=request_completed") {
+	if !strings.Contains(logText, "----- [ANALYZE_REQUEST][REQUEST_COMPLETED] BEGIN request_id="+requestID) {
 		t.Fatalf("missing request summary log: %s", logText)
 	}
-	if !strings.Contains(logText, "request_id="+requestID) {
-		t.Fatalf("missing request_id in logs: %s", logText)
-	}
-	if !strings.Contains(logText, `model_name="deepseek-chat"`) {
+	if !strings.Contains(logText, "model_name:") || !strings.Contains(logText, "deepseek-chat") {
 		t.Fatalf("missing model_name in logs: %s", logText)
 	}
-	if !strings.Contains(logText, `error_reason="NONE"`) {
+	if !strings.Contains(logText, "error_reason:") || !strings.Contains(logText, "NONE") {
 		t.Fatalf("missing success error_reason in logs: %s", logText)
 	}
-	if !strings.Contains(logText, "duration_ms=") {
+	if !strings.Contains(logText, "duration_ms:") {
 		t.Fatalf("missing duration_ms in logs: %s", logText)
 	}
 }
@@ -266,7 +347,7 @@ func TestAnalyze_EmptyLogRequestLogsReason(t *testing.T) {
 	if rec.Header().Get(requestIDHeader) == "" {
 		t.Fatalf("expected %s header", requestIDHeader)
 	}
-	if !strings.Contains(logBuffer.String(), `error_reason="EMPTY_LOG_TEXT"`) {
+	if !strings.Contains(logBuffer.String(), "EMPTY_LOG_TEXT") {
 		t.Fatalf("missing EMPTY_LOG_TEXT in logs: %s", logBuffer.String())
 	}
 }
@@ -285,7 +366,7 @@ func TestAnalyze_LogTooLongRequestLogsReason(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("unexpected status: %d", rec.Code)
 	}
-	if !strings.Contains(logBuffer.String(), `error_reason="LOG_TOO_LONG"`) {
+	if !strings.Contains(logBuffer.String(), "LOG_TOO_LONG") {
 		t.Fatalf("missing LOG_TOO_LONG in logs: %s", logBuffer.String())
 	}
 }
@@ -307,7 +388,7 @@ func TestAnalyze_ModelTimeoutLogsReason(t *testing.T) {
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("unexpected status: %d", rec.Code)
 	}
-	if !strings.Contains(logBuffer.String(), `error_reason="MODEL_TIMEOUT"`) {
+	if !strings.Contains(logBuffer.String(), "MODEL_TIMEOUT") {
 		t.Fatalf("missing MODEL_TIMEOUT in logs: %s", logBuffer.String())
 	}
 }
@@ -329,7 +410,7 @@ func TestAnalyze_InvalidModelJSONLogsReason(t *testing.T) {
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("unexpected status: %d", rec.Code)
 	}
-	if !strings.Contains(logBuffer.String(), `error_reason="RESULT_JSON_REPAIR_FAILED"`) {
+	if !strings.Contains(logBuffer.String(), "RESULT_JSON_REPAIR_FAILED") {
 		t.Fatalf("missing RESULT_JSON_REPAIR_FAILED in logs: %s", logBuffer.String())
 	}
 }
@@ -388,7 +469,7 @@ func TestAnalyze_RequestCompletedLogContainsDuration(t *testing.T) {
 	if time.Since(start) < 0 {
 		t.Fatal("unexpected clock")
 	}
-	if !strings.Contains(logBuffer.String(), "duration_ms=") {
+	if !strings.Contains(logBuffer.String(), "duration_ms:") {
 		t.Fatalf("missing duration_ms in logs: %s", logBuffer.String())
 	}
 }

@@ -8,7 +8,7 @@ import (
 )
 
 type AnalyzeService interface {
-	Analyze(ctx context.Context, req model.AnalyzeRequest) (model.AnalyzeResult, error)
+	Analyze(ctx context.Context, input model.AnalyzeInput) (model.AnalyzeResult, error)
 	ModelName() string
 }
 
