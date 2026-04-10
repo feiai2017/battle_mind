@@ -128,8 +128,8 @@ if [[ "${FORCE_FAIL}" == "1" ]]; then
   normal_status="201"
 fi
 
-run_case "normal" "testdata/request_normal.json" "${normal_status}" "\"summary\""
-run_case "short-log" "testdata/request_short_log.json" "200" "\"summary\""
+run_case "normal" "testdata/request_normal.json" "${normal_status}" "\"model_suggestions\""
+run_case "short-log" "testdata/request_short_log.json" "200" "\"model_suggestions\""
 run_case "long-log" "testdata/request_long_log.json" "400" "LOG_TOO_LONG"
 run_case "invalid-input" "testdata/request_invalid.json" "400" "EMPTY_LOG_TEXT"
 run_case "timeout-sim" "testdata/request_timeout_sim.json" "502" "ANALYZE_FAILED" "X-Debug-Simulate-Timeout: 1"

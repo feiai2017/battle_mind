@@ -4,11 +4,12 @@ import (
 	"context"
 
 	"github.com/feiai2017/battle_mind/internal/model"
+	"github.com/feiai2017/battle_mind/internal/output"
 	"github.com/feiai2017/battle_mind/internal/service"
 )
 
 type AnalyzeService interface {
-	Analyze(ctx context.Context, input model.AnalyzeInput) (model.AnalyzeResult, error)
+	Analyze(ctx context.Context, input model.AnalyzeInput) (output.AnalyzeOutput, error)
 	ModelName() string
 }
 

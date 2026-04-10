@@ -14,18 +14,19 @@ import (
 	"time"
 
 	"github.com/feiai2017/battle_mind/internal/model"
+	"github.com/feiai2017/battle_mind/internal/output"
 	"github.com/feiai2017/battle_mind/internal/service"
 )
 
 type stubAnalyzeService struct {
 	called    int
-	result    model.AnalyzeResult
+	result    output.AnalyzeOutput
 	err       error
 	last      model.AnalyzeInput
 	modelName string
 }
 
-func (s *stubAnalyzeService) Analyze(_ context.Context, input model.AnalyzeInput) (model.AnalyzeResult, error) {
+func (s *stubAnalyzeService) Analyze(_ context.Context, input model.AnalyzeInput) (output.AnalyzeOutput, error) {
 	s.called++
 	s.last = input
 	return s.result, s.err
@@ -105,8 +106,8 @@ func TestAnalyze_InvalidRequestDoesNotCallService(t *testing.T) {
 
 func TestAnalyze_ValidRequestCallsService(t *testing.T) {
 	svc := &stubAnalyzeService{
-		result: model.AnalyzeResult{
-			Summary: "ok",
+		result: output.AnalyzeOutput{
+			ModelSuggestions: output.ModelSuggestionBlock{Summary: "ok"},
 		},
 	}
 	h := New(svc)
@@ -133,8 +134,8 @@ func TestAnalyze_ValidRequestCallsService(t *testing.T) {
 
 func TestAnalyze_StructuredRequestWithoutLogTextCallsService(t *testing.T) {
 	svc := &stubAnalyzeService{
-		result: model.AnalyzeResult{
-			Summary: "ok",
+		result: output.AnalyzeOutput{
+			ModelSuggestions: output.ModelSuggestionBlock{Summary: "ok"},
 		},
 	}
 	h := New(svc)
@@ -186,8 +187,8 @@ func TestAnalyze_StructuredRequestWithoutLogTextCallsService(t *testing.T) {
 
 func TestAnalyze_BattleReportRequestCallsService(t *testing.T) {
 	svc := &stubAnalyzeService{
-		result: model.AnalyzeResult{
-			Summary: "ok",
+		result: output.AnalyzeOutput{
+			ModelSuggestions: output.ModelSuggestionBlock{Summary: "ok"},
 		},
 	}
 	h := New(svc)
@@ -297,8 +298,8 @@ func TestAnalyze_SuccessLogsRequestSummaryAndHeader(t *testing.T) {
 
 	svc := &stubAnalyzeService{
 		modelName: "deepseek-chat",
-		result: model.AnalyzeResult{
-			Summary: "ok",
+		result: output.AnalyzeOutput{
+			ModelSuggestions: output.ModelSuggestionBlock{Summary: "ok"},
 		},
 	}
 	h := New(svc)
@@ -458,7 +459,7 @@ func TestAnalyze_RequestCompletedLogContainsDuration(t *testing.T) {
 
 	svc := &stubAnalyzeService{
 		modelName: "deepseek-chat",
-		result:    model.AnalyzeResult{Summary: "ok"},
+		result:    output.AnalyzeOutput{ModelSuggestions: output.ModelSuggestionBlock{Summary: "ok"}},
 	}
 	h := New(svc)
 	req := httptest.NewRequest(http.MethodPost, "/analyze", strings.NewReader(`{"log_text":"test log"}`))

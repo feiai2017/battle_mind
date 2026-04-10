@@ -256,18 +256,3 @@ func compactRawJSON(raw json.RawMessage) (json.RawMessage, error) {
 	}
 	return append(json.RawMessage(nil), compact.Bytes()...), nil
 }
-
-// AnalyzeResult 是分析服务标准输出，供上层接口直接返回。
-type AnalyzeResult struct {
-	Summary     string         `json:"summary"`
-	Issues      []AnalyzeIssue `json:"issues"`
-	Suggestions []string       `json:"suggestions"`
-	RawText     string         `json:"raw_text,omitempty"`
-}
-
-type AnalyzeIssue struct {
-	Title       string   `json:"title"`
-	Description string   `json:"description"`
-	Severity    string   `json:"severity"`
-	Evidence    []string `json:"evidence"`
-}

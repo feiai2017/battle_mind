@@ -34,17 +34,20 @@ func renderInstructionBlock() string {
 	return strings.Join([]string{
 		"[Instruction]",
 		"你是一个游戏战斗分析助手。",
+		"系统已经直接输出 rule_findings，你不需要重复完整罗列规则明确发现。",
 		"你会同时看到 RuleSummary 和 battle report 关键上下文。",
-		"请优先参考 RuleSummary 中的 hard_findings，把其中已确认的规则事实作为分析基础。",
+		"你的任务只是在这些信息之上生成 model_suggestions，也就是解释、归因、建议和风险提醒。",
+		"请优先参考 RuleSummary 中的 hard_findings，把其中已确认的规则事实作为解释基础。",
 		"请把 suspicious_signals 仅作为值得关注的信号，语气必须保守，不要当成确定事实。",
 		"metrics 是规则证据，可用于解释问题和支持结论。",
 		"如果规则没有覆盖到某些细节，再结合 battle report 关键上下文进行补充。",
 		"如果 battle report 与 RuleSummary 存在张力，优先尊重 RuleSummary 中的明确规则发现。",
 		"不要把没有规则支持的猜测说成确定原因。",
+		"不要机械重复 hard_findings，必要时可以简短引用，但重点放在为什么值得关注、建议优先检查什么、可能存在什么风险。",
 		"所有自然语言输出字段必须使用简体中文。",
 		"最终只输出合法 JSON，不要输出 markdown，不要输出解释，不要输出代码块。",
 		"输出格式如下：",
-		`{"summary":"一句话总结","issues":[{"title":"问题标题","description":"问题描述","severity":"low|medium|high","evidence":["证据1"]}],"suggestions":["建议1"]}`,
+		`{"summary":"一句话解释","suggestions":["建议1"],"risks":["风险1"]}`,
 	}, "\n")
 }
 

@@ -16,8 +16,7 @@
 - `cmd/convertbatch`：批量转换 battle report
 - 配置文件加载：`config.json`
 - 最小 LLM client：`net/http` + timeout + 错误处理
-- `/analyze` 固定 JSON 输出：`summary` / `issues` / `suggestions`
-- 兼容旧格式 `problems -> issues`
+- `/analyze` 固定 JSON 输出：`rule_findings` / `model_suggestions`
 - 模型返回非法 JSON 时，支持一次 repair 重试
 - `/analyze` 请求级日志：`request_id` / `duration_ms` / `model_name` / `error_reason`
 - 日志同时输出到控制台和文件
@@ -43,6 +42,7 @@
 - `internal/llm`：模型调用封装
 - `internal/logging`：标准库日志输出到控制台和文件
 - `internal/model`：请求、响应、battle report 结构定义
+- `internal/output`：最终分析输出结构与规则层输出构建
 - `scripts`：本地脚本入口
 - `testdata`：请求样例和 battle report 样例
 
@@ -169,22 +169,43 @@ curl -X POST http://localhost:8080/analyze \
 {
   "ok": true,
   "data": {
-    "summary": "战斗获胜，但循环效率不足，DOT 占比偏低。",
-    "issues": [
-      {
-        "title": "DOT 占比偏低",
-        "description": "当前构筑预期依赖 DOT 输出，但实际表现不足。",
-        "severity": "medium",
-        "evidence": [
-          "DOT 伤害占比偏低",
-          "普攻占比偏高"
-        ]
+    "rule_findings": {
+      "findings": [
+        {
+          "code": "LOW_DOT_ACTIVITY",
+          "severity": "warning",
+          "message": "DOT 相关事件偏少",
+          "evidence": {
+            "dot_apply": 2,
+            "dot_burst": 0,
+            "dot_event_count": 4,
+            "dot_tick": 2
+          }
+        }
+      ],
+      "metrics": {
+        "skill_casts": {
+          "contagion_wave": 9
+        },
+        "last_cast_times": {},
+        "dot_event_count": 4,
+        "dot_event_count_by_type": {
+          "dot_apply": 2,
+          "dot_tick": 2,
+          "dot_burst": 0
+        }
       }
-    ],
-    "suggestions": [
-      "优化 DOT 技能覆盖",
-      "减少普攻填充"
-    ],
+    },
+    "model_suggestions": {
+      "summary": "DOT 体系能够运转，但规则层已经显示 DOT 活动偏少，后续输出稳定性值得关注。",
+      "suggestions": [
+        "优先检查 DOT 核心技能覆盖和爆发时机。",
+        "对照长空窗或低活跃时段复查循环节奏。"
+      ],
+      "risks": [
+        "进入更高压战斗后，当前循环断档风险可能被放大。"
+      ]
+    },
     "raw_text": "{...model raw output...}"
   }
 }
@@ -332,6 +353,8 @@ bash scripts/test_analyze.sh
 ```bash
 make server
 make test
+make analyze
+make analyze ANALYZE_INPUT=testdata/request_invalid.json
 make test-sample
 make convert INPUT=path/to/battle-report OUTPUT_DIR=path/to/out
 ```

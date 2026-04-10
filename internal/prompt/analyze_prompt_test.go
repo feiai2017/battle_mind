@@ -147,13 +147,26 @@ func TestBuildAnalyzePrompt_ContainsBehaviorInstructions(t *testing.T) {
 	prompt := BuildAnalyzePrompt(AnalyzePromptInput{Report: &model.BattleReport{}})
 
 	for _, want := range []string{
+		"系统已经直接输出 rule_findings，你不需要重复完整罗列规则明确发现",
 		"请优先参考 RuleSummary 中的 hard_findings",
 		"请把 suspicious_signals 仅作为值得关注的信号，语气必须保守",
+		"你的任务只是在这些信息之上生成 model_suggestions",
 		"最终只输出合法 JSON",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("missing instruction %q in prompt: %s", want, prompt)
 		}
+	}
+}
+
+func TestBuildAnalyzePrompt_TargetsModelSuggestionsOnly(t *testing.T) {
+	prompt := BuildAnalyzePrompt(AnalyzePromptInput{Report: &model.BattleReport{}})
+
+	if !strings.Contains(prompt, `{"summary":"一句话解释","suggestions":["建议1"],"risks":["风险1"]}`) {
+		t.Fatalf("prompt should target model suggestion block only: %s", prompt)
+	}
+	if strings.Contains(prompt, `"issues"`) {
+		t.Fatalf("prompt should not ask model to generate issues: %s", prompt)
 	}
 }
 
