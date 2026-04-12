@@ -121,6 +121,32 @@ func TestBuildCastIdleGaps_NonCastEventsDoNotFillGap(t *testing.T) {
 	}
 }
 
+func TestBuildCastIdleGaps_IgnoresNonCastAndSortsInput(t *testing.T) {
+	events := []RuleEvent{
+		{Timestamp: 9.5, EventType: EventTypeCast, SkillName: "传染波"},
+		{Timestamp: 6.0, EventType: EventTypeDotTick, SkillName: "毒蚀穿刺"},
+		{Timestamp: 1.0, EventType: EventTypeCast, SkillName: "毒蚀穿刺"},
+		{Timestamp: 7.0, EventType: EventTypeSkillHit, SkillName: "毒蚀穿刺"},
+		{Timestamp: 4.0, EventType: EventTypeCast, SkillName: "裂蚀绽放"},
+	}
+
+	gaps := BuildCastIdleGaps(events)
+	if len(gaps) != 2 {
+		t.Fatalf("unexpected gap count: %d", len(gaps))
+	}
+	if gaps[0].Duration != 3.0 || gaps[1].Duration != 5.5 {
+		t.Fatalf("unexpected gaps: %+v", gaps)
+	}
+
+	maxGap, ok := MaxCastIdleGap(events)
+	if !ok {
+		t.Fatal("expected max gap")
+	}
+	if maxGap.Duration != 5.5 {
+		t.Fatalf("unexpected max gap: %+v", maxGap)
+	}
+}
+
 func TestBuildCastIdleGaps_EmptySkillNameStillParticipates(t *testing.T) {
 	events := []RuleEvent{
 		{Timestamp: 2.0, EventType: EventTypeCast, SkillName: ""},
